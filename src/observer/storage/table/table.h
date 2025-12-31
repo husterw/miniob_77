@@ -51,6 +51,12 @@ public:
   friend class HeapTableEngine;
 
   /**
+   * 删除一个表
+   * @param path 元数据保存的文件(完整路径)
+   */
+  RC drop(Db *db, const char *path);
+
+  /**
    * 创建一个表
    * @param path 元数据保存的文件(完整路径)
    * @param name 表名

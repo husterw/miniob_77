@@ -14,6 +14,7 @@ See the Mulan PSL v2 for more details. */
 
 #include <limits.h>
 #include <string.h>
+#include <filesystem>
 
 #include "common/defs.h"
 #include "common/lang/string.h"
@@ -124,6 +125,45 @@ RC Table::create(Db *db, int32_t table_id, const char *path, const char *name, c
   LOG_INFO("Successfully create table %s:%s", base_dir, name);
   return rc;
 }
+
+RC Table::drop(Db *db, const char *path)
+{
+  RC rc = RC::SUCCESS;
+
+  // 删除元数据文件
+  if (std::filesystem::exists(path)) {
+    if (!std::filesystem::remove(path)) {
+      printf("Failed to remove meta file: %s\n", path);
+      return rc;
+    }
+  }
+
+  // 删除数据文件
+  string data_file = table_data_file(db_->path().c_str(), name());
+  if (std::filesystem::exists(data_file)) {
+    // 注意：不调用 bpm.close_file，避免重复释放。引擎析构时会处理。
+    if (!std::filesystem::remove(data_file)) {
+      printf("Failed to remove data file: %s\n", data_file.c_str());
+      return rc;
+    }
+  }
+
+  // 删除索引文件
+  for (int i = 0; i < table_meta_.index_num(); ++i) {
+    const IndexMeta *index_meta = table_meta_.index(i);
+    string index_file = table_index_file(db_->path().c_str(), name(), index_meta->name());
+    if (std::filesystem::exists(index_file)) {
+      if (!std::filesystem::remove(index_file)) {
+        printf("Failed to remove index file: %s\n", index_file.c_str());
+        return rc;
+      }
+    }
+  }
+
+  printf("Successfully dropped table %s\n", name());
+  return rc;
+}
+
 
 RC Table::open(Db *db, const char *meta_file, const char *base_dir)
 {

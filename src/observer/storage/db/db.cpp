@@ -176,6 +176,32 @@ RC Db::create_table(const char *table_name, span<const AttrInfoSqlNode> attribut
   return RC::SUCCESS;
 }
 
+RC Db::drop_table(const char *table_name)
+{
+  RC rc = RC::SUCCESS;
+  printf("Dropping table %s\n", table_name);
+  if (common::is_blank(table_name)) {
+    LOG_ERROR("drop table fail: table name is empty!");
+    return RC::EMPTY;
+  }
+  Table *table = find_table(table_name);
+  if (table != nullptr) {
+    std::string table_file_path = table_meta_file(path_.c_str(), table_name);
+    rc                          = table->drop(this, table_file_path.c_str());
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("Failed to drop table %s.", table_name);
+      return rc;
+    }
+    delete table;
+    table = nullptr;
+    opened_tables_.erase(std::string(table_name));
+    return rc;
+  } else {
+    LOG_ERROR("drop table fail: table %s not exists!", table_name);
+    return RC::SCHEMA_TABLE_NOT_EXIST;
+  }
+}
+
 Table *Db::find_table(const char *table_name) const
 {
   unordered_map<string, Table *>::const_iterator iter = opened_tables_.find(table_name);
