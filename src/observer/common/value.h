@@ -33,6 +33,7 @@ public:
   friend class DataType;
   friend class IntegerType;
   friend class FloatType;
+  friend class DateType;
   friend class BooleanType;
   friend class CharType;
   friend class VectorType;
@@ -41,63 +42,63 @@ public:
 
   ~Value() { reset(); }
 
-  Value(AttrType attr_type, char *data, int length = 4) : attr_type_(attr_type) { this->set_data(data, length); }
+  Value(AttrType attr_type, char* data, int length = 4) : attr_type_(attr_type) { this->set_data(data, length); }
 
   explicit Value(int val);
   explicit Value(float val);
   explicit Value(bool val);
-  explicit Value(const char *s, int len = 0);
-  explicit Value(const string_t &val);
+  explicit Value(const char* s, int len = 0);
+  explicit Value(const string_t& val);
 
-  Value(const Value &other);
-  Value(Value &&other);
+  Value(const Value& other);
+  Value(Value&& other);
 
-  Value &operator=(const Value &other);
-  Value &operator=(Value &&other);
+  Value& operator=(const Value& other);
+  Value& operator=(Value&& other);
 
   void reset();
 
-  static RC add(const Value &left, const Value &right, Value &result)
+  static RC add(const Value& left, const Value& right, Value& result)
   {
     return DataType::type_instance(result.attr_type())->add(left, right, result);
   }
 
-  static RC subtract(const Value &left, const Value &right, Value &result)
+  static RC subtract(const Value& left, const Value& right, Value& result)
   {
     return DataType::type_instance(result.attr_type())->subtract(left, right, result);
   }
 
-  static RC multiply(const Value &left, const Value &right, Value &result)
+  static RC multiply(const Value& left, const Value& right, Value& result)
   {
     return DataType::type_instance(result.attr_type())->multiply(left, right, result);
   }
 
-  static RC divide(const Value &left, const Value &right, Value &result)
+  static RC divide(const Value& left, const Value& right, Value& result)
   {
     return DataType::type_instance(result.attr_type())->divide(left, right, result);
   }
 
-  static RC negative(const Value &value, Value &result)
+  static RC negative(const Value& value, Value& result)
   {
     return DataType::type_instance(result.attr_type())->negative(value, result);
   }
 
-  static RC cast_to(const Value &value, AttrType to_type, Value &result)
+  static RC cast_to(const Value& value, AttrType to_type, Value& result)
   {
     return DataType::type_instance(value.attr_type())->cast_to(value, to_type, result);
   }
 
   void set_type(AttrType type) { this->attr_type_ = type; }
-  void set_data(char *data, int length);
-  void set_data(const char *data, int length) { this->set_data(const_cast<char *>(data), length); }
-  void set_value(const Value &value);
+  void set_data(char* data, int length);
+  void set_data(const char* data, int length) { this->set_data(const_cast<char*>(data), length); }
+  void set_value(const Value& value);
   void set_boolean(bool val);
 
   string to_string() const;
 
-  int compare(const Value &other) const;
+  int compare(const Value& other) const;
 
-  char *data() const;
+  char* data() const;
 
   int      length() const { return length_; }
   AttrType attr_type() const { return attr_type_; }
@@ -116,21 +117,21 @@ public:
 public:
   void set_int(int val);
   void set_float(float val);
-  void set_string(const char *s, int len = 0);
+  void set_string(const char* s, int len = 0);
   void set_empty_string(int len);
-  void set_string_from_other(const Value &other);
+  void set_string_from_other(const Value& other);
 
 private:
   AttrType attr_type_ = AttrType::UNDEFINED;
-  int      length_    = 0;
+  int      length_ = 0;
 
   union Val
   {
     int32_t int_value_;
     float   float_value_;
     bool    bool_value_;
-    char   *pointer_value_;
-  } value_ = {.int_value_ = 0};
+    char* pointer_value_;
+  } value_ = { .int_value_ = 0 };
 
   /// 是否申请并占有内存, 目前对于 CHARS 类型 own_data_ 为true, 其余类型 own_data_ 为false
   bool own_data_ = false;

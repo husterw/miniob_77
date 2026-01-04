@@ -18,12 +18,12 @@ See the Mulan PSL v2 for more details. */
 
 using namespace std;
 
-RC FieldExpr::get_value(const Tuple &tuple, Value &value) const
+RC FieldExpr::get_value(const Tuple& tuple, Value& value) const
 {
   return tuple.find_cell(TupleCellSpec(table_name(), field_name()), value);
 }
 
-bool FieldExpr::equal(const Expression &other) const
+bool FieldExpr::equal(const Expression& other) const
 {
   if (this == &other) {
     return true;
@@ -31,23 +31,24 @@ bool FieldExpr::equal(const Expression &other) const
   if (other.type() != ExprType::FIELD) {
     return false;
   }
-  const auto &other_field_expr = static_cast<const FieldExpr &>(other);
+  const auto& other_field_expr = static_cast<const FieldExpr&>(other);
   return table_name() == other_field_expr.table_name() && field_name() == other_field_expr.field_name();
 }
 
 // TODO: 在进行表达式计算时，`chunk` 包含了所有列，因此可以通过 `field_id` 获取到对应列。
 // 后续可以优化成在 `FieldExpr` 中存储 `chunk` 中某列的位置信息。
-RC FieldExpr::get_column(Chunk &chunk, Column &column)
+RC FieldExpr::get_column(Chunk& chunk, Column& column)
 {
   if (pos_ != -1) {
     column.reference(chunk.column(pos_));
-  } else {
+  }
+  else {
     column.reference(chunk.column(field().meta()->field_id()));
   }
   return RC::SUCCESS;
 }
 
-bool ValueExpr::equal(const Expression &other) const
+bool ValueExpr::equal(const Expression& other) const
 {
   if (this == &other) {
     return true;
@@ -55,17 +56,17 @@ bool ValueExpr::equal(const Expression &other) const
   if (other.type() != ExprType::VALUE) {
     return false;
   }
-  const auto &other_value_expr = static_cast<const ValueExpr &>(other);
+  const auto& other_value_expr = static_cast<const ValueExpr&>(other);
   return value_.compare(other_value_expr.get_value()) == 0;
 }
 
-RC ValueExpr::get_value(const Tuple &tuple, Value &value) const
+RC ValueExpr::get_value(const Tuple& tuple, Value& value) const
 {
   value = value_;
   return RC::SUCCESS;
 }
 
-RC ValueExpr::get_column(Chunk &chunk, Column &column)
+RC ValueExpr::get_column(Chunk& chunk, Column& column)
 {
   column.init(value_, chunk.rows());
   return RC::SUCCESS;
@@ -73,11 +74,12 @@ RC ValueExpr::get_column(Chunk &chunk, Column &column)
 
 /////////////////////////////////////////////////////////////////////////////////
 CastExpr::CastExpr(unique_ptr<Expression> child, AttrType cast_type) : child_(std::move(child)), cast_type_(cast_type)
-{}
+{
+}
 
 CastExpr::~CastExpr() {}
 
-RC CastExpr::cast(const Value &value, Value &cast_value) const
+RC CastExpr::cast(const Value& value, Value& cast_value) const
 {
   RC rc = RC::SUCCESS;
   if (this->value_type() == value.attr_type()) {
@@ -88,7 +90,7 @@ RC CastExpr::cast(const Value &value, Value &cast_value) const
   return rc;
 }
 
-RC CastExpr::get_value(const Tuple &tuple, Value &result) const
+RC CastExpr::get_value(const Tuple& tuple, Value& result) const
 {
   Value value;
   RC rc = child_->get_value(tuple, value);
@@ -99,7 +101,7 @@ RC CastExpr::get_value(const Tuple &tuple, Value &result) const
   return cast(value, result);
 }
 
-RC CastExpr::get_column(Chunk &chunk, Column &column)
+RC CastExpr::get_column(Chunk& chunk, Column& column)
 {
   Column child_column;
   RC rc = child_->get_column(chunk, child_column);
@@ -119,7 +121,7 @@ RC CastExpr::get_column(Chunk &chunk, Column &column)
   return rc;
 }
 
-RC CastExpr::try_get_value(Value &result) const
+RC CastExpr::try_get_value(Value& result) const
 {
   Value value;
   RC rc = child_->try_get_value(value);
@@ -133,58 +135,59 @@ RC CastExpr::try_get_value(Value &result) const
 ////////////////////////////////////////////////////////////////////////////////
 
 ComparisonExpr::ComparisonExpr(CompOp comp, unique_ptr<Expression> left, unique_ptr<Expression> right)
-    : comp_(comp), left_(std::move(left)), right_(std::move(right))
+  : comp_(comp), left_(std::move(left)), right_(std::move(right))
 {
 }
 
 ComparisonExpr::~ComparisonExpr() {}
 
-RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &result) const
+RC ComparisonExpr::compare_value(const Value& left, const Value& right, bool& result) const
 {
-  RC  rc         = RC::SUCCESS;
+  RC  rc = RC::SUCCESS;
   int cmp_result = left.compare(right);
-  result         = false;
+  result = false;
   switch (comp_) {
-    case EQUAL_TO: {
-      result = (0 == cmp_result);
-    } break;
-    case LESS_EQUAL: {
-      result = (cmp_result <= 0);
-    } break;
-    case NOT_EQUAL: {
-      result = (cmp_result != 0);
-    } break;
-    case LESS_THAN: {
-      result = (cmp_result < 0);
-    } break;
-    case GREAT_EQUAL: {
-      result = (cmp_result >= 0);
-    } break;
-    case GREAT_THAN: {
-      result = (cmp_result > 0);
-    } break;
-    default: {
-      LOG_WARN("unsupported comparison. %d", comp_);
-      rc = RC::INTERNAL;
-    } break;
+  case EQUAL_TO: {
+    result = (0 == cmp_result);
+  } break;
+  case LESS_EQUAL: {
+    result = (cmp_result <= 0);
+  } break;
+  case NOT_EQUAL: {
+    result = (cmp_result != 0);
+  } break;
+  case LESS_THAN: {
+    result = (cmp_result < 0);
+  } break;
+  case GREAT_EQUAL: {
+    result = (cmp_result >= 0);
+  } break;
+  case GREAT_THAN: {
+    result = (cmp_result > 0);
+  } break;
+  default: {
+    LOG_WARN("unsupported comparison. %d", comp_);
+    rc = RC::INTERNAL;
+  } break;
   }
 
   return rc;
 }
 
-RC ComparisonExpr::try_get_value(Value &cell) const
+RC ComparisonExpr::try_get_value(Value& cell) const
 {
   if (left_->type() == ExprType::VALUE && right_->type() == ExprType::VALUE) {
-    ValueExpr *  left_value_expr  = static_cast<ValueExpr *>(left_.get());
-    ValueExpr *  right_value_expr = static_cast<ValueExpr *>(right_.get());
-    const Value &left_cell        = left_value_expr->get_value();
-    const Value &right_cell       = right_value_expr->get_value();
+    ValueExpr* left_value_expr = static_cast<ValueExpr*>(left_.get());
+    ValueExpr* right_value_expr = static_cast<ValueExpr*>(right_.get());
+    const Value& left_cell = left_value_expr->get_value();
+    const Value& right_cell = right_value_expr->get_value();
 
     bool value = false;
-    RC   rc    = compare_value(left_cell, right_cell, value);
+    RC   rc = compare_value(left_cell, right_cell, value);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to compare tuple cells. rc=%s", strrc(rc));
-    } else {
+    }
+    else {
       cell.set_boolean(value);
     }
     return rc;
@@ -193,7 +196,7 @@ RC ComparisonExpr::try_get_value(Value &cell) const
   return RC::INVALID_ARGUMENT;
 }
 
-RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
+RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
 {
   Value left_value;
   Value right_value;
@@ -218,7 +221,7 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
   return rc;
 }
 
-RC ComparisonExpr::eval(Chunk &chunk, vector<uint8_t> &select)
+RC ComparisonExpr::eval(Chunk& chunk, vector<uint8_t>& select)
 {
   RC     rc = RC::SUCCESS;
   Column left_column;
@@ -240,20 +243,26 @@ RC ComparisonExpr::eval(Chunk &chunk, vector<uint8_t> &select)
   }
   if (left_column.attr_type() == AttrType::INTS) {
     rc = compare_column<int>(left_column, right_column, select);
-  } else if (left_column.attr_type() == AttrType::FLOATS) {
+  }
+  else if (left_column.attr_type() == AttrType::FLOATS) {
     rc = compare_column<float>(left_column, right_column, select);
-  } else if (left_column.attr_type() == AttrType::CHARS) {
+  }
+  else if (left_column.attr_type() == AttrType::DATES) {
+    rc = compare_column<int>(left_column, right_column, select);
+  }
+  else if (left_column.attr_type() == AttrType::CHARS) {
     int rows = 0;
     if (left_column.column_type() == Column::Type::CONSTANT_COLUMN) {
       rows = right_column.count();
-    } else {
+    }
+    else {
       rows = left_column.count();
     }
     for (int i = 0; i < rows; ++i) {
       Value left_val = left_column.get_value(i);
       Value right_val = right_column.get_value(i);
-      bool        result   = false;
-      rc                   = compare_value(left_val, right_val, result);
+      bool        result = false;
+      rc = compare_value(left_val, right_val, result);
       if (rc != RC::SUCCESS) {
         LOG_WARN("failed to compare tuple cells. rc=%s", strrc(rc));
         return rc;
@@ -261,7 +270,8 @@ RC ComparisonExpr::eval(Chunk &chunk, vector<uint8_t> &select)
       select[i] &= result ? 1 : 0;
     }
 
-  } else {
+  }
+  else {
     LOG_WARN("unsupported data type %d", left_column.attr_type());
     return RC::INTERNAL;
   }
@@ -269,30 +279,34 @@ RC ComparisonExpr::eval(Chunk &chunk, vector<uint8_t> &select)
 }
 
 template <typename T>
-RC ComparisonExpr::compare_column(const Column &left, const Column &right, vector<uint8_t> &result) const
+RC ComparisonExpr::compare_column(const Column& left, const Column& right, vector<uint8_t>& result) const
 {
   RC rc = RC::SUCCESS;
 
-  bool left_const  = left.column_type() == Column::Type::CONSTANT_COLUMN;
+  bool left_const = left.column_type() == Column::Type::CONSTANT_COLUMN;
   bool right_const = right.column_type() == Column::Type::CONSTANT_COLUMN;
   if (left_const && right_const) {
-    compare_result<T, true, true>((T *)left.data(), (T *)right.data(), left.count(), result, comp_);
-  } else if (left_const && !right_const) {
-    compare_result<T, true, false>((T *)left.data(), (T *)right.data(), right.count(), result, comp_);
-  } else if (!left_const && right_const) {
-    compare_result<T, false, true>((T *)left.data(), (T *)right.data(), left.count(), result, comp_);
-  } else {
-    compare_result<T, false, false>((T *)left.data(), (T *)right.data(), left.count(), result, comp_);
+    compare_result<T, true, true>((T*)left.data(), (T*)right.data(), left.count(), result, comp_);
+  }
+  else if (left_const && !right_const) {
+    compare_result<T, true, false>((T*)left.data(), (T*)right.data(), right.count(), result, comp_);
+  }
+  else if (!left_const && right_const) {
+    compare_result<T, false, true>((T*)left.data(), (T*)right.data(), left.count(), result, comp_);
+  }
+  else {
+    compare_result<T, false, false>((T*)left.data(), (T*)right.data(), left.count(), result, comp_);
   }
   return rc;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-ConjunctionExpr::ConjunctionExpr(Type type, vector<unique_ptr<Expression>> &children)
-    : conjunction_type_(type), children_(std::move(children))
-{}
+ConjunctionExpr::ConjunctionExpr(Type type, vector<unique_ptr<Expression>>& children)
+  : conjunction_type_(type), children_(std::move(children))
+{
+}
 
-RC ConjunctionExpr::get_value(const Tuple &tuple, Value &value) const
+RC ConjunctionExpr::get_value(const Tuple& tuple, Value& value) const
 {
   RC rc = RC::SUCCESS;
   if (children_.empty()) {
@@ -301,7 +315,7 @@ RC ConjunctionExpr::get_value(const Tuple &tuple, Value &value) const
   }
 
   Value tmp_value;
-  for (const unique_ptr<Expression> &expr : children_) {
+  for (const unique_ptr<Expression>& expr : children_) {
     rc = expr->get_value(tuple, tmp_value);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to get value by child expression. rc=%s", strrc(rc));
@@ -321,14 +335,16 @@ RC ConjunctionExpr::get_value(const Tuple &tuple, Value &value) const
 
 ////////////////////////////////////////////////////////////////////////////////
 
-ArithmeticExpr::ArithmeticExpr(ArithmeticExpr::Type type, Expression *left, Expression *right)
-    : arithmetic_type_(type), left_(left), right_(right)
-{}
+ArithmeticExpr::ArithmeticExpr(ArithmeticExpr::Type type, Expression* left, Expression* right)
+  : arithmetic_type_(type), left_(left), right_(right)
+{
+}
 ArithmeticExpr::ArithmeticExpr(ArithmeticExpr::Type type, unique_ptr<Expression> left, unique_ptr<Expression> right)
-    : arithmetic_type_(type), left_(std::move(left)), right_(std::move(right))
-{}
+  : arithmetic_type_(type), left_(std::move(left)), right_(std::move(right))
+{
+}
 
-bool ArithmeticExpr::equal(const Expression &other) const
+bool ArithmeticExpr::equal(const Expression& other) const
 {
   if (this == &other) {
     return true;
@@ -336,9 +352,9 @@ bool ArithmeticExpr::equal(const Expression &other) const
   if (type() != other.type()) {
     return false;
   }
-  auto &other_arith_expr = static_cast<const ArithmeticExpr &>(other);
+  auto& other_arith_expr = static_cast<const ArithmeticExpr&>(other);
   return arithmetic_type_ == other_arith_expr.arithmetic_type() && left_->equal(*other_arith_expr.left_) &&
-         right_->equal(*other_arith_expr.right_);
+    right_->equal(*other_arith_expr.right_);
 }
 AttrType ArithmeticExpr::value_type() const
 {
@@ -347,15 +363,15 @@ AttrType ArithmeticExpr::value_type() const
   }
 
   if ((left_->value_type() == AttrType::INTS) &&
-   (right_->value_type() == AttrType::INTS) &&
-      arithmetic_type_ != Type::DIV) {
+    (right_->value_type() == AttrType::INTS) &&
+    arithmetic_type_ != Type::DIV) {
     return AttrType::INTS;
   }
 
   return AttrType::FLOATS;
 }
 
-RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value, Value &value) const
+RC ArithmeticExpr::calc_value(const Value& left_value, const Value& right_value, Value& value) const
 {
   RC rc = RC::SUCCESS;
 
@@ -363,95 +379,105 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
   value.set_type(target_type);
 
   switch (arithmetic_type_) {
-    case Type::ADD: {
-      Value::add(left_value, right_value, value);
-    } break;
+  case Type::ADD: {
+    Value::add(left_value, right_value, value);
+  } break;
 
-    case Type::SUB: {
-      Value::subtract(left_value, right_value, value);
-    } break;
+  case Type::SUB: {
+    Value::subtract(left_value, right_value, value);
+  } break;
 
-    case Type::MUL: {
-      Value::multiply(left_value, right_value, value);
-    } break;
+  case Type::MUL: {
+    Value::multiply(left_value, right_value, value);
+  } break;
 
-    case Type::DIV: {
-      Value::divide(left_value, right_value, value);
-    } break;
+  case Type::DIV: {
+    Value::divide(left_value, right_value, value);
+  } break;
 
-    case Type::NEGATIVE: {
-      Value::negative(left_value, value);
-    } break;
+  case Type::NEGATIVE: {
+    Value::negative(left_value, value);
+  } break;
 
-    default: {
-      rc = RC::INTERNAL;
-      LOG_WARN("unsupported arithmetic type. %d", arithmetic_type_);
-    } break;
+  default: {
+    rc = RC::INTERNAL;
+    LOG_WARN("unsupported arithmetic type. %d", arithmetic_type_);
+  } break;
   }
   return rc;
 }
 
 template <bool LEFT_CONSTANT, bool RIGHT_CONSTANT>
 RC ArithmeticExpr::execute_calc(
-    const Column &left, const Column &right, Column &result, Type type, AttrType attr_type) const
+  const Column& left, const Column& right, Column& result, Type type, AttrType attr_type) const
 {
   RC rc = RC::SUCCESS;
   switch (type) {
-    case Type::ADD: {
-      if (attr_type == AttrType::INTS) {
-        binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, int, AddOperator>(
-            (int *)left.data(), (int *)right.data(), (int *)result.data(), result.capacity());
-      } else if (attr_type == AttrType::FLOATS) {
-        binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, float, AddOperator>(
-            (float *)left.data(), (float *)right.data(), (float *)result.data(), result.capacity());
-      } else {
-        rc = RC::UNIMPLEMENTED;
-      }
-    } break;
-    case Type::SUB:
-      if (attr_type == AttrType::INTS) {
-        binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, int, SubtractOperator>(
-            (int *)left.data(), (int *)right.data(), (int *)result.data(), result.capacity());
-      } else if (attr_type == AttrType::FLOATS) {
-        binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, float, SubtractOperator>(
-            (float *)left.data(), (float *)right.data(), (float *)result.data(), result.capacity());
-      } else {
-        rc = RC::UNIMPLEMENTED;
-      }
-      break;
-    case Type::MUL:
-      if (attr_type == AttrType::INTS) {
-        binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, int, MultiplyOperator>(
-            (int *)left.data(), (int *)right.data(), (int *)result.data(), result.capacity());
-      } else if (attr_type == AttrType::FLOATS) {
-        binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, float, MultiplyOperator>(
-            (float *)left.data(), (float *)right.data(), (float *)result.data(), result.capacity());
-      } else {
-        rc = RC::UNIMPLEMENTED;
-      }
-      break;
-    case Type::DIV:
-      if (attr_type == AttrType::INTS) {
-        binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, int, DivideOperator>(
-            (int *)left.data(), (int *)right.data(), (int *)result.data(), result.capacity());
-      } else if (attr_type == AttrType::FLOATS) {
-        binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, float, DivideOperator>(
-            (float *)left.data(), (float *)right.data(), (float *)result.data(), result.capacity());
-      } else {
-        rc = RC::UNIMPLEMENTED;
-      }
-      break;
-    case Type::NEGATIVE:
-      if (attr_type == AttrType::INTS) {
-        unary_operator<LEFT_CONSTANT, int, NegateOperator>((int *)left.data(), (int *)result.data(), result.capacity());
-      } else if (attr_type == AttrType::FLOATS) {
-        unary_operator<LEFT_CONSTANT, float, NegateOperator>(
-            (float *)left.data(), (float *)result.data(), result.capacity());
-      } else {
-        rc = RC::UNIMPLEMENTED;
-      }
-      break;
-    default: rc = RC::UNIMPLEMENTED; break;
+  case Type::ADD: {
+    if (attr_type == AttrType::INTS) {
+      binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, int, AddOperator>(
+        (int*)left.data(), (int*)right.data(), (int*)result.data(), result.capacity());
+    }
+    else if (attr_type == AttrType::FLOATS) {
+      binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, float, AddOperator>(
+        (float*)left.data(), (float*)right.data(), (float*)result.data(), result.capacity());
+    }
+    else {
+      rc = RC::UNIMPLEMENTED;
+    }
+  } break;
+  case Type::SUB:
+    if (attr_type == AttrType::INTS) {
+      binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, int, SubtractOperator>(
+        (int*)left.data(), (int*)right.data(), (int*)result.data(), result.capacity());
+    }
+    else if (attr_type == AttrType::FLOATS) {
+      binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, float, SubtractOperator>(
+        (float*)left.data(), (float*)right.data(), (float*)result.data(), result.capacity());
+    }
+    else {
+      rc = RC::UNIMPLEMENTED;
+    }
+    break;
+  case Type::MUL:
+    if (attr_type == AttrType::INTS) {
+      binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, int, MultiplyOperator>(
+        (int*)left.data(), (int*)right.data(), (int*)result.data(), result.capacity());
+    }
+    else if (attr_type == AttrType::FLOATS) {
+      binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, float, MultiplyOperator>(
+        (float*)left.data(), (float*)right.data(), (float*)result.data(), result.capacity());
+    }
+    else {
+      rc = RC::UNIMPLEMENTED;
+    }
+    break;
+  case Type::DIV:
+    if (attr_type == AttrType::INTS) {
+      binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, int, DivideOperator>(
+        (int*)left.data(), (int*)right.data(), (int*)result.data(), result.capacity());
+    }
+    else if (attr_type == AttrType::FLOATS) {
+      binary_operator<LEFT_CONSTANT, RIGHT_CONSTANT, float, DivideOperator>(
+        (float*)left.data(), (float*)right.data(), (float*)result.data(), result.capacity());
+    }
+    else {
+      rc = RC::UNIMPLEMENTED;
+    }
+    break;
+  case Type::NEGATIVE:
+    if (attr_type == AttrType::INTS) {
+      unary_operator<LEFT_CONSTANT, int, NegateOperator>((int*)left.data(), (int*)result.data(), result.capacity());
+    }
+    else if (attr_type == AttrType::FLOATS) {
+      unary_operator<LEFT_CONSTANT, float, NegateOperator>(
+        (float*)left.data(), (float*)result.data(), result.capacity());
+    }
+    else {
+      rc = RC::UNIMPLEMENTED;
+    }
+    break;
+  default: rc = RC::UNIMPLEMENTED; break;
   }
   if (rc == RC::SUCCESS) {
     result.set_count(result.capacity());
@@ -459,7 +485,7 @@ RC ArithmeticExpr::execute_calc(
   return rc;
 }
 
-RC ArithmeticExpr::get_value(const Tuple &tuple, Value &value) const
+RC ArithmeticExpr::get_value(const Tuple& tuple, Value& value) const
 {
   RC rc = RC::SUCCESS;
 
@@ -479,7 +505,7 @@ RC ArithmeticExpr::get_value(const Tuple &tuple, Value &value) const
   return calc_value(left_value, right_value, value);
 }
 
-RC ArithmeticExpr::get_column(Chunk &chunk, Column &column)
+RC ArithmeticExpr::get_column(Chunk& chunk, Column& column)
 {
   RC rc = RC::SUCCESS;
   if (pos_ != -1) {
@@ -502,31 +528,34 @@ RC ArithmeticExpr::get_column(Chunk &chunk, Column &column)
   return calc_column(left_column, right_column, column);
 }
 
-RC ArithmeticExpr::calc_column(const Column &left_column, const Column &right_column, Column &column) const
+RC ArithmeticExpr::calc_column(const Column& left_column, const Column& right_column, Column& column) const
 {
   RC rc = RC::SUCCESS;
 
   const AttrType target_type = value_type();
   column.init(target_type, left_column.attr_len(), max(left_column.count(), right_column.count()));
-  bool left_const  = left_column.column_type() == Column::Type::CONSTANT_COLUMN;
+  bool left_const = left_column.column_type() == Column::Type::CONSTANT_COLUMN;
   bool right_const = right_column.column_type() == Column::Type::CONSTANT_COLUMN;
   if (left_const && right_const) {
     column.set_column_type(Column::Type::CONSTANT_COLUMN);
     rc = execute_calc<true, true>(left_column, right_column, column, arithmetic_type_, target_type);
-  } else if (left_const && !right_const) {
+  }
+  else if (left_const && !right_const) {
     column.set_column_type(Column::Type::NORMAL_COLUMN);
     rc = execute_calc<true, false>(left_column, right_column, column, arithmetic_type_, target_type);
-  } else if (!left_const && right_const) {
+  }
+  else if (!left_const && right_const) {
     column.set_column_type(Column::Type::NORMAL_COLUMN);
     rc = execute_calc<false, true>(left_column, right_column, column, arithmetic_type_, target_type);
-  } else {
+  }
+  else {
     column.set_column_type(Column::Type::NORMAL_COLUMN);
     rc = execute_calc<false, false>(left_column, right_column, column, arithmetic_type_, target_type);
   }
   return rc;
 }
 
-RC ArithmeticExpr::try_get_value(Value &value) const
+RC ArithmeticExpr::try_get_value(Value& value) const
 {
   RC rc = RC::SUCCESS;
 
@@ -552,32 +581,36 @@ RC ArithmeticExpr::try_get_value(Value &value) const
 
 ////////////////////////////////////////////////////////////////////////////////
 
-UnboundAggregateExpr::UnboundAggregateExpr(const char *aggregate_name, Expression *child)
-    : aggregate_name_(aggregate_name), child_(child)
-{}
+UnboundAggregateExpr::UnboundAggregateExpr(const char* aggregate_name, Expression* child)
+  : aggregate_name_(aggregate_name), child_(child)
+{
+}
 
-UnboundAggregateExpr::UnboundAggregateExpr(const char *aggregate_name, unique_ptr<Expression> child)
-    : aggregate_name_(aggregate_name), child_(std::move(child))
-{}
+UnboundAggregateExpr::UnboundAggregateExpr(const char* aggregate_name, unique_ptr<Expression> child)
+  : aggregate_name_(aggregate_name), child_(std::move(child))
+{
+}
 
 ////////////////////////////////////////////////////////////////////////////////
-AggregateExpr::AggregateExpr(Type type, Expression *child) : aggregate_type_(type), child_(child) {}
+AggregateExpr::AggregateExpr(Type type, Expression* child) : aggregate_type_(type), child_(child) {}
 
 AggregateExpr::AggregateExpr(Type type, unique_ptr<Expression> child) : aggregate_type_(type), child_(std::move(child))
-{}
+{
+}
 
-RC AggregateExpr::get_column(Chunk &chunk, Column &column)
+RC AggregateExpr::get_column(Chunk& chunk, Column& column)
 {
   RC rc = RC::SUCCESS;
   if (pos_ != -1) {
     column.reference(chunk.column(pos_));
-  } else {
+  }
+  else {
     rc = RC::INTERNAL;
   }
   return rc;
 }
 
-bool AggregateExpr::equal(const Expression &other) const
+bool AggregateExpr::equal(const Expression& other) const
 {
   if (this == &other) {
     return true;
@@ -585,7 +618,7 @@ bool AggregateExpr::equal(const Expression &other) const
   if (other.type() != type()) {
     return false;
   }
-  const AggregateExpr &other_aggr_expr = static_cast<const AggregateExpr &>(other);
+  const AggregateExpr& other_aggr_expr = static_cast<const AggregateExpr&>(other);
   return aggregate_type_ == other_aggr_expr.aggregate_type() && child_->equal(*other_aggr_expr.child());
 }
 
@@ -593,37 +626,42 @@ unique_ptr<Aggregator> AggregateExpr::create_aggregator() const
 {
   unique_ptr<Aggregator> aggregator;
   switch (aggregate_type_) {
-    case Type::SUM: {
-      aggregator = make_unique<SumAggregator>();
-      break;
-    }
-    default: {
-      ASSERT(false, "unsupported aggregate type");
-      break;
-    }
+  case Type::SUM: {
+    aggregator = make_unique<SumAggregator>();
+    break;
+  }
+  default: {
+    ASSERT(false, "unsupported aggregate type");
+    break;
+  }
   }
   return aggregator;
 }
 
-RC AggregateExpr::get_value(const Tuple &tuple, Value &value) const
+RC AggregateExpr::get_value(const Tuple& tuple, Value& value) const
 {
   return tuple.find_cell(TupleCellSpec(name()), value);
 }
 
-RC AggregateExpr::type_from_string(const char *type_str, AggregateExpr::Type &type)
+RC AggregateExpr::type_from_string(const char* type_str, AggregateExpr::Type& type)
 {
   RC rc = RC::SUCCESS;
   if (0 == strcasecmp(type_str, "count")) {
     type = Type::COUNT;
-  } else if (0 == strcasecmp(type_str, "sum")) {
+  }
+  else if (0 == strcasecmp(type_str, "sum")) {
     type = Type::SUM;
-  } else if (0 == strcasecmp(type_str, "avg")) {
+  }
+  else if (0 == strcasecmp(type_str, "avg")) {
     type = Type::AVG;
-  } else if (0 == strcasecmp(type_str, "max")) {
+  }
+  else if (0 == strcasecmp(type_str, "max")) {
     type = Type::MAX;
-  } else if (0 == strcasecmp(type_str, "min")) {
+  }
+  else if (0 == strcasecmp(type_str, "min")) {
     type = Type::MIN;
-  } else {
+  }
+  else {
     rc = RC::INVALID_ARGUMENT;
   }
   return rc;
