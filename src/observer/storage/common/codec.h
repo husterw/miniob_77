@@ -20,8 +20,8 @@ See the Mulan PSL v2 for more details. */
 #include <cstring>
 #include <algorithm>
 
-using byte_t    = unsigned char;
-using bytes     = vector<byte_t>;
+using byte_t = unsigned char;
+using bytes = vector<byte_t>;
 using float64_t = double_t;
 
 // reference: https://github.com/code0xff/orderedcodepp
@@ -39,9 +39,9 @@ public:
 
   struct infinity
   {
-    bool operator==(const infinity &i) const { return true; }
+    bool operator==(const infinity& i) const { return true; }
 
-    bool operator==(infinity &&i) { return true; }
+    bool operator==(infinity&& i) { return true; }
   };
 
   template <typename T>
@@ -49,7 +49,7 @@ public:
   {
     T val;
 
-    bool operator==(const decr<T> &o) const { return val == o.val; }
+    bool operator==(const decr<T>& o) const { return val == o.val; }
 
     bool operator==(decr<T> o) { return val == o.val; }
   };
@@ -61,14 +61,15 @@ public:
   };
 
   struct trailing_string : string
-  {};
-
-  static void invert(span<byte_t> &s)
   {
-    std::for_each(s.begin(), s.end(), [](byte_t &c) { c ^= 0xff; });
+  };
+
+  static void invert(span<byte_t>& s)
+  {
+    std::for_each(s.begin(), s.end(), [](byte_t& c) { c ^= 0xff; });
   }
 
-  static RC append(bytes &s, uint64_t x)
+  static RC append(bytes& s, uint64_t x)
   {
     vector<byte_t> buf(9);
     auto           i = 8;
@@ -80,7 +81,7 @@ public:
     return RC::SUCCESS;
   }
 
-  static RC append(bytes &s, int64_t x)
+  static RC append(bytes& s, int64_t x)
   {
     if (x >= -64 && x < 64) {
       s.insert(s.end(), static_cast<byte_t>(x ^ 0x80));
@@ -117,7 +118,7 @@ public:
     return RC::SUCCESS;
   }
 
-  static RC append(bytes &s, float64_t x)
+  static RC append(bytes& s, float64_t x)
   {
     RC rc = RC::SUCCESS;
     if (std::isnan(x)) {
@@ -137,20 +138,20 @@ public:
     return rc;
   }
 
-  static RC append(bytes &s, const string &x)
+  static RC append(bytes& s, const string& x)
   {
     auto l = x.begin();
     for (auto c = x.begin(); c < x.end(); c++) {
       switch (byte_t(*c)) {
-        case 0x00:
-          s.insert(s.end(), l, c);
-          s.insert(s.end(), &lit00[0], &lit00[0] + 2);
-          l = c + 1;
-          break;
-        case 0xff:
-          s.insert(s.end(), l, c);
-          s.insert(s.end(), &litff[0], &litff[0] + 2);
-          l = c + 1;
+      case 0x00:
+        s.insert(s.end(), l, c);
+        s.insert(s.end(), &lit00[0], &lit00[0] + 2);
+        l = c + 1;
+        break;
+      case 0xff:
+        s.insert(s.end(), l, c);
+        s.insert(s.end(), &litff[0], &litff[0] + 2);
+        l = c + 1;
       }
     }
     s.insert(s.end(), l, x.end());
@@ -158,19 +159,19 @@ public:
     return RC::SUCCESS;
   }
 
-  static RC append(bytes &s, const trailing_string &x)
+  static RC append(bytes& s, const trailing_string& x)
   {
     s.insert(s.end(), x.begin(), x.end());
     return RC::SUCCESS;
   }
 
-  static RC append(bytes &s, const infinity &_)
+  static RC append(bytes& s, const infinity& _)
   {
     s.insert(s.end(), &inf[0], &inf[0] + 2);
     return RC::SUCCESS;
   }
 
-  static RC append(bytes &s, const string_or_infinity &x)
+  static RC append(bytes& s, const string_or_infinity& x)
   {
     RC rc = RC::SUCCESS;
     if (x.inf) {
@@ -182,7 +183,8 @@ public:
         LOG_WARN("orderedcode: append infinity failed");
         return rc;
       }
-    } else {
+    }
+    else {
       if (OB_FAIL(append(s, x.s))) {
         LOG_WARN("orderedcode: append string failed");
         return rc;
@@ -191,7 +193,7 @@ public:
     return rc;
   }
 
-  static RC parse(span<byte_t> &s, byte_t dir, int64_t &dst)
+  static RC parse(span<byte_t>& s, byte_t dir, int64_t& dst)
   {
     if (s.empty()) {
       LOG_WARN("orderedcode: corrupt input");
@@ -200,12 +202,12 @@ public:
     byte_t c = s[0] ^ dir;
     if (c >= 0x40 && c < 0xc0) {
       dst = int64_t(int8_t(c ^ 0x80));
-      s   = s.subspan(1);
+      s = s.subspan(1);
       return RC::SUCCESS;
     }
     bool neg = (c & 0x80) == 0;
     if (neg) {
-      c   = ~c;
+      c = ~c;
       dir = ~dir;
     }
     size_t n = 0;
@@ -239,11 +241,11 @@ public:
       x = ~x;
     }
     dst = x;
-    s   = s.subspan(n);
+    s = s.subspan(n);
     return RC::SUCCESS;
   }
 
-  static RC parse(span<byte_t> &s, byte_t dir, uint64_t &dst)
+  static RC parse(span<byte_t>& s, byte_t dir, uint64_t& dst)
   {
     RC rc = RC::SUCCESS;
     if (s.empty()) {
@@ -260,11 +262,11 @@ public:
       x = x << 8 | (s[1 + i] ^ dir);
     }
     dst = x;
-    s   = s.subspan(1 + n);
+    s = s.subspan(1 + n);
     return rc;
   }
 
-  static RC parse(span<byte_t> &s, byte_t dir, infinity &_)
+  static RC parse(span<byte_t>& s, byte_t dir, infinity& _)
   {
     RC rc = RC::SUCCESS;
     if (s.size() < 2) {
@@ -279,62 +281,62 @@ public:
     return rc;
   }
 
-  static RC parse(span<byte_t> &s, byte_t dir, string &dst)
+  static RC parse(span<byte_t>& s, byte_t dir, string& dst)
   {
     bytes buf;
     for (auto l = 0, i = 0; i < (int)s.size();) {
       switch (s[i] ^ dir) {
-        case 0x00:
-          if (i + 1 >= (int)s.size()) {
-            LOG_WARN("orderedcode: corrupt input");
-            return RC::INVALID_ARGUMENT;
-          }
-          switch (s[i + 1] ^ dir) {
-            case 0x01:
-              dst.clear();
-              if (l == 0 && dir == increasing) {
-                dst.insert(dst.end(), s.begin(), s.begin() + i);
-                s = s.subspan(i + 2);
-                return RC::SUCCESS;
-              }
-              buf.insert(buf.end(), s.begin() + l, s.begin() + i);
-              if (dir == decreasing) {
-                span<byte_t> sp(buf);
-                invert(sp);
-              }
-              dst.insert(dst.end(), buf.begin(), buf.end());
-              s = s.subspan(i + 2);
-              return RC::SUCCESS;
-            case 0xff:
-              buf.insert(buf.end(), s.begin() + l, s.begin() + i);
-              buf.insert(buf.end(), static_cast<byte_t>(0x00 ^ dir));
-              i += 2;
-              l = i;
-              break;
-            default: LOG_WARN("orderedcode: corrupt input"); return RC::INVALID_ARGUMENT;
-          }
-          break;
-        case 0xff:
-          if (i + 1 >= (int)s.size() || ((s[i + 1] ^ dir) != 0x00)) {
-            LOG_WARN("orderedcode: corrupt input");
-            return RC::INVALID_ARGUMENT;
+      case 0x00:
+        if (i + 1 >= (int)s.size()) {
+          LOG_WARN("orderedcode: corrupt input");
+          return RC::INVALID_ARGUMENT;
+        }
+        switch (s[i + 1] ^ dir) {
+        case 0x01:
+          dst.clear();
+          if (l == 0 && dir == increasing) {
+            dst.insert(dst.end(), s.begin(), s.begin() + i);
+            s = s.subspan(i + 2);
+            return RC::SUCCESS;
           }
           buf.insert(buf.end(), s.begin() + l, s.begin() + i);
-          buf.insert(buf.end(), static_cast<byte_t>(0xff ^ dir));
+          if (dir == decreasing) {
+            span<byte_t> sp(buf);
+            invert(sp);
+          }
+          dst.insert(dst.end(), buf.begin(), buf.end());
+          s = s.subspan(i + 2);
+          return RC::SUCCESS;
+        case 0xff:
+          buf.insert(buf.end(), s.begin() + l, s.begin() + i);
+          buf.insert(buf.end(), static_cast<byte_t>(0x00 ^ dir));
           i += 2;
           l = i;
           break;
-        default: i++;
+        default: LOG_WARN("orderedcode: corrupt input"); return RC::INVALID_ARGUMENT;
+        }
+        break;
+      case 0xff:
+        if (i + 1 >= (int)s.size() || ((s[i + 1] ^ dir) != 0x00)) {
+          LOG_WARN("orderedcode: corrupt input");
+          return RC::INVALID_ARGUMENT;
+        }
+        buf.insert(buf.end(), s.begin() + l, s.begin() + i);
+        buf.insert(buf.end(), static_cast<byte_t>(0xff ^ dir));
+        i += 2;
+        l = i;
+        break;
+      default: i++;
       }
     }
     LOG_WARN("orderedcode: corrupt input");
     return RC::INVALID_ARGUMENT;
   }
 
-  static RC parse(span<byte_t> &s, byte_t dir, float64_t &dst)
+  static RC parse(span<byte_t>& s, byte_t dir, float64_t& dst)
   {
     RC      rc = RC::SUCCESS;
-    int64_t i  = 0;
+    int64_t i = 0;
     parse(s, dir, i);
     if (i < 0) {
       i = ((int64_t)-1 << 63) - i;
@@ -346,26 +348,28 @@ public:
     return rc;
   }
 
-  static RC parse(span<byte_t> &s, byte_t dir, string_or_infinity &dst)
+  static RC parse(span<byte_t>& s, byte_t dir, string_or_infinity& dst)
   {
     RC rc = RC::SUCCESS;
     try {
       infinity _;
-      rc      = parse(s, dir, _);
+      rc = parse(s, dir, _);
       dst.inf = true;
       return rc;
-    } catch (...) {
+    }
+    catch (...) {
       rc = parse(s, dir, dst.s);
       return rc;
     }
   }
 
-  static RC parse(span<byte_t> &s, byte_t dir, trailing_string &dst)
+  static RC parse(span<byte_t>& s, byte_t dir, trailing_string& dst)
   {
     dst.clear();
     if (dir == increasing) {
       dst.insert(dst.end(), s.begin(), s.end());
-    } else {
+    }
+    else {
       invert(s);
       dst.insert(dst.end(), s.begin(), s.end());
     }
@@ -376,69 +380,80 @@ public:
 class Codec
 {
 public:
-  static RC encode_without_rid(int64_t table_id, bytes &encoded_key)
+  static RC encode_without_rid(int64_t table_id, bytes& encoded_key)
   {
     RC rc = RC::SUCCESS;
     if (OB_FAIL(OrderedCode::append(encoded_key, table_prefix))) {
       LOG_WARN("append failed");
-    } else if (OB_FAIL(OrderedCode::append(encoded_key, table_id))) {
+    }
+    else if (OB_FAIL(OrderedCode::append(encoded_key, table_id))) {
       LOG_WARN("append failed");
     }
     return rc;
   }
-  static RC encode(int64_t table_id, uint64_t rid, bytes &encoded_key)
+  static RC encode(int64_t table_id, uint64_t rid, bytes& encoded_key)
   {
     RC rc = RC::SUCCESS;
     if (OB_FAIL(OrderedCode::append(encoded_key, table_prefix))) {
-      LOG_WARN("append failed");
-    } else if (OB_FAIL(OrderedCode::append(encoded_key, table_id))) {
-      LOG_WARN("append failed");
-    } else if (OB_FAIL(OrderedCode::append(encoded_key, rowkey_prefix))) {
-      LOG_WARN("append failed");
-    } else if (OB_FAIL(OrderedCode::append(encoded_key, rid))) {
       LOG_WARN("append failed");
     }
-    return rc;
-  }
-
-  static RC encode_table_prefix(int64_t table_id, bytes &encoded_key)
-  {
-    RC rc = RC::SUCCESS;
-    if (OB_FAIL(OrderedCode::append(encoded_key, table_prefix))) {
+    else if (OB_FAIL(OrderedCode::append(encoded_key, table_id))) {
       LOG_WARN("append failed");
-    } else if (OB_FAIL(OrderedCode::append(encoded_key, table_id))) {
+    }
+    else if (OB_FAIL(OrderedCode::append(encoded_key, rowkey_prefix))) {
       LOG_WARN("append failed");
-    } else if (OB_FAIL(OrderedCode::append(encoded_key, rowkey_prefix))) {
+    }
+    else if (OB_FAIL(OrderedCode::append(encoded_key, rid))) {
       LOG_WARN("append failed");
     }
     return rc;
   }
 
-  static RC encode_value(const Value &val, bytes &dst)
+  static RC encode_table_prefix(int64_t table_id, bytes& encoded_key)
+  {
+    RC rc = RC::SUCCESS;
+    if (OB_FAIL(OrderedCode::append(encoded_key, table_prefix))) {
+      LOG_WARN("append failed");
+    }
+    else if (OB_FAIL(OrderedCode::append(encoded_key, table_id))) {
+      LOG_WARN("append failed");
+    }
+    else if (OB_FAIL(OrderedCode::append(encoded_key, rowkey_prefix))) {
+      LOG_WARN("append failed");
+    }
+    return rc;
+  }
+
+  static RC encode_value(const Value& val, bytes& dst)
   {
     RC rc = RC::SUCCESS;
     switch (val.attr_type()) {
-      case AttrType::INTS:
-        if (OB_FAIL(OrderedCode::append(dst, (int64_t)val.get_int()))) {
-          LOG_WARN("append failed");
-        }
-        break;
-      case AttrType::FLOATS:
-        if (OB_FAIL(OrderedCode::append(dst, (double)val.get_float()))) {
-          LOG_WARN("append failed");
-        }
-        break;
-      case AttrType::CHARS:
-        if (OB_FAIL(OrderedCode::append(dst, val.get_string()))) {
-          LOG_WARN("append failed");
-        }
-        break;
-      default: return RC::INVALID_ARGUMENT;
+    case AttrType::INTS:
+      if (OB_FAIL(OrderedCode::append(dst, (int64_t)val.get_int()))) {
+        LOG_WARN("append failed");
+      }
+      break;
+    case AttrType::FLOATS:
+      if (OB_FAIL(OrderedCode::append(dst, (double)val.get_float()))) {
+        LOG_WARN("append failed");
+      }
+      break;
+    case AttrType::DATES:
+      if (OB_FAIL(OrderedCode::append(dst, (int64_t)val.get_int()))) {
+        LOG_WARN("append failed");
+      }
+      break;
+    case AttrType::CHARS:
+      if (OB_FAIL(OrderedCode::append(dst, val.get_string()))) {
+        LOG_WARN("append failed");
+      }
+      break;
+    default: return RC::INVALID_ARGUMENT;
     }
     return rc;
   }
 
-  static RC encode_int(int64_t val, bytes &dst)
+  static RC encode_int(int64_t val, bytes& dst)
   {
     RC rc = RC::SUCCESS;
     if (OB_FAIL(OrderedCode::append(dst, val))) {
@@ -447,7 +462,7 @@ public:
     return rc;
   }
 
-  static RC decode(bytes &encoded_key, int64_t &table_id)
+  static RC decode(bytes& encoded_key, int64_t& table_id)
   {
     RC           rc = RC::SUCCESS;
     span<byte_t> sp(encoded_key);
@@ -455,15 +470,16 @@ public:
     if (OB_FAIL(OrderedCode::parse(sp, OrderedCode::increasing, table_prefix))) {
       LOG_WARN("parse failed");
       return rc;
-    } else if (OB_FAIL(OrderedCode::parse(sp, OrderedCode::increasing, table_id))) {
+    }
+    else if (OB_FAIL(OrderedCode::parse(sp, OrderedCode::increasing, table_id))) {
       LOG_WARN("parse failed");
       return rc;
     }
     return rc;
   }
 
-  static constexpr const char *table_prefix  = "t";
-  static constexpr const char *rowkey_prefix = "r";
+  static constexpr const char* table_prefix = "t";
+  static constexpr const char* rowkey_prefix = "r";
 };
 
 // template<typename T>

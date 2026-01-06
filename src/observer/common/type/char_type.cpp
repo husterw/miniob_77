@@ -12,6 +12,8 @@ See the Mulan PSL v2 for more details. */
 #include "common/log/log.h"
 #include "common/type/char_type.h"
 #include "common/value.h"
+#include "common/type/date_type.h"
+#include "iostream"
 
 int CharType::compare(const Value &left, const Value &right) const
 {
@@ -29,6 +31,21 @@ RC CharType::set_value_from_str(Value &val, const string &data) const
 RC CharType::cast_to(const Value &val, AttrType type, Value &result) const
 {
   switch (type) {
+    case AttrType::DATES: {
+      int days = 0;
+      std::string s(val.value_.pointer_value_ ? val.value_.pointer_value_ : "");
+      if (!s.empty() && (int)s.size() != val.length_) {
+        s.assign(val.value_.pointer_value_, val.length_);
+      }
+      RC rc = DateType::parse(s, days);
+      if (OB_FAIL(rc)) {
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
+      std::cout << "Casting CHAR: " << s << " to DATE with days: " << days << std::endl;
+      result.set_int(days);
+      result.set_type(AttrType::DATES);
+      return RC::SUCCESS;
+    }
     default: return RC::UNIMPLEMENTED;
   }
   return RC::SUCCESS;
@@ -38,6 +55,9 @@ int CharType::cast_cost(AttrType type)
 {
   if (type == AttrType::CHARS) {
     return 0;
+  }
+  if (type == AttrType::DATES) {
+    return 1;
   }
   return INT32_MAX;
 }
