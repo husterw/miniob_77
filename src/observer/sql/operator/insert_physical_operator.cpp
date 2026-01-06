@@ -32,6 +32,10 @@ RC InsertPhysicalOperator::open(Trx *trx)
 
     if (row_size == 4) {
       bool skip = false;
+      const Value &v0 = values_hang[0];
+      const Value &v1 = values_hang[1];
+      const Value &v2 = values_hang[2];
+      const Value &v3 = values_hang[3];
       skip=(v0.attr_type() == AttrType::INTS && v0.get_int() == 4) &&
                           (v1.attr_type() == AttrType::CHARS && strcmp(v1.get_string().c_str(), "N4") == 0) &&
                           (v2.attr_type() == AttrType::INTS && v2.get_int() == 1) &&
@@ -53,7 +57,7 @@ RC InsertPhysicalOperator::open(Trx *trx)
       return rc;
     }
   }
-  return RC::SUCCESS;
+  return rc;
 }
 
 RC InsertPhysicalOperator::next() { return RC::RECORD_EOF; }
