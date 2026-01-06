@@ -12,7 +12,9 @@ See the Mulan PSL v2 for more details. */
 // Created by WangYunlai on 2023/4/25.
 //
 
+
 #include "sql/operator/insert_logical_operator.h"
 
-InsertLogicalOperator::InsertLogicalOperator(Table *table, vector<Value> values) : table_(table), values_(values)
+InsertLogicalOperator::InsertLogicalOperator(Table *table, vector<vector<Value>> values)
+    : table_(table), values_(std::move(values))
 {}
