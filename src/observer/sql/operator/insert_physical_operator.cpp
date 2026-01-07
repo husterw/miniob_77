@@ -26,37 +26,31 @@ InsertPhysicalOperator::InsertPhysicalOperator(Table *table, vector<vector<Value
 RC InsertPhysicalOperator::open(Trx *trx)
 {
   RC rc = RC::SUCCESS;
+  vector<Record> records; 
+
   for (const auto &values_hang : values_) {
     Record record;
     const int row_size = static_cast<int>(values_hang.size());
-
-    if (row_size == 4) {
-      bool skip = false;
-      const Value &v0 = values_hang[0];
-      const Value &v1 = values_hang[1];
-      const Value &v2 = values_hang[2];
-      const Value &v3 = values_hang[3];
-      skip=(v0.attr_type() == AttrType::INTS && v0.get_int() == 4) &&
-                          (v1.attr_type() == AttrType::CHARS && strcmp(v1.get_string().c_str(), "N4") == 0) &&
-                          (v2.attr_type() == AttrType::INTS && v2.get_int() == 1) &&
-                          (v3.attr_type() == AttrType::INTS && v3.get_int() == 1);
-      if(skip){
-        continue;
-      }
-    }
     
     rc = table_->make_record(row_size, values_hang.data(), record);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to make record. row_size=%d, rc=%s", row_size, strrc(rc));
-      return rc;
+      return rc; 
     }
-
+    
+    records.push_back(std::move(record));
+  }
+  
+  for (auto &record : records) {
     rc = trx->insert_record(table_, record);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to insert record by transaction. table=%s, rc=%s", table_->name(), strrc(rc));
+      trx->rollback(); 
       return rc;
     }
   }
+  
+  rc = trx->commit(); 
   return rc;
 }
 
