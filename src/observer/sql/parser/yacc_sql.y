@@ -90,6 +90,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         STRING_T
         FLOAT_T
         DATE_T
+        TEXT_T
         VECTOR_T
         HELP
         EXIT
@@ -368,14 +369,14 @@ attr_def:
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = $4;
+      $$->length = ($$->type == AttrType::TEXTS) ? 4096 : $4;
     }
     | ID type
     {
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = 4;
+      $$->length = ($$->type == AttrType::TEXTS) ? 4096 : 4;
     }
     ;
 number:
@@ -386,6 +387,7 @@ type:
     | STRING_T { $$ = static_cast<int>(AttrType::CHARS); }
     | FLOAT_T  { $$ = static_cast<int>(AttrType::FLOATS); }
     | DATE_T   { $$ = static_cast<int>(AttrType::DATES); }
+    | TEXT_T   { $$ = static_cast<int>(AttrType::TEXTS); }
     | VECTOR_T { $$ = static_cast<int>(AttrType::VECTORS); }
     ;
 primary_key:
