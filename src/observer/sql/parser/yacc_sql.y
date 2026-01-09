@@ -92,6 +92,11 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         DATE_T
         TEXT_T
         VECTOR_T
+        MAX_T
+        MIN_T
+        COUNT_T
+        AVG_T
+        SUM_T
         HELP
         EXIT
         DOT //QUOTE
@@ -605,6 +610,21 @@ expression:
 aggregate_expression:
     ID LBRACE expression RBRACE {
       $$ = create_aggregate_expression($1, $3, sql_string, &@$);
+    }
+    | SUM_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("sum", $3, sql_string, &@$);
+    }
+    | AVG_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("avg", $3, sql_string, &@$);
+    }
+    | COUNT_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("count", $3, sql_string, &@$);
+    }
+    | MAX_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("max", $3, sql_string, &@$);
+    }
+    | MIN_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("min", $3, sql_string, &@$);
     }
     ;
 
