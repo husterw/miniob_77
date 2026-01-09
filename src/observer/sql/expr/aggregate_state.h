@@ -60,6 +60,46 @@ public:
   }
 };
 
+template <class T>
+class MaxState
+{
+  public:
+  MaxState() : value((T)-0x7fffffff) {}
+  T    value;
+  void update(const T *values, int size);
+  void update(const T &value)
+  {
+    if (this->value < value) {
+      this->value = value;
+    }
+  }
+  template <class U>
+  U finalize()
+  {
+    return (U)value;
+  }
+};
+
+template <class T>
+class MinState
+{
+  public:
+  MinState() : value((T)0x7fffffff) {}
+  T    value;
+  void update(const T *values, int size);
+  void update(const T &value)
+  {
+    if (this->value > value) {
+      this->value = value;
+    }
+  }
+  template <class U>
+  U finalize()
+  {
+    return (U)value;
+  }
+};
+
 void *create_aggregate_state(AggregateExpr::Type aggr_type, AttrType attr_type);
 
 RC aggregate_state_update_by_value(void *state, AggregateExpr::Type aggr_type, AttrType attr_type, const Value &val);

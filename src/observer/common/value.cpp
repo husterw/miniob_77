@@ -128,6 +128,10 @@ void Value::set_data(char* data, int length)
     value_.int_value_ = *(int*)data;
     length_ = length;
   } break;
+  case AttrType::TEXTS: {
+    set_string(data, length);
+    set_type(AttrType::TEXTS);
+  } break;
   case AttrType::BOOLEANS: {
     value_.bool_value_ = *(int*)data != 0;
     length_ = length;
@@ -210,6 +214,10 @@ void Value::set_value(const Value& value)
     set_int(value.get_int());
     set_type(AttrType::DATES);
   } break;
+  case AttrType::TEXTS: {
+    set_string(value.get_string().c_str());
+    set_type(AttrType::TEXTS);
+  } break;
   case AttrType::CHARS: {
     set_string(value.get_string().c_str());
   } break;
@@ -224,7 +232,7 @@ void Value::set_value(const Value& value)
 
 void Value::set_string_from_other(const Value& other)
 {
-  ASSERT(attr_type_ == AttrType::CHARS, "attr type is not CHARS");
+  ASSERT(attr_type_ == AttrType::CHARS || attr_type_ == AttrType::TEXTS, "attr type is not CHARS or TEXTS");
   if (own_data_ && other.value_.pointer_value_ != nullptr && length_ != 0) {
     this->value_.pointer_value_ = new char[this->length_ + 1];
     memcpy(this->value_.pointer_value_, other.value_.pointer_value_, this->length_);
@@ -235,7 +243,8 @@ void Value::set_string_from_other(const Value& other)
 char* Value::data() const
 {
   switch (attr_type_) {
-  case AttrType::CHARS: {
+  case AttrType::CHARS:
+  case AttrType::TEXTS: {
     return value_.pointer_value_;
   } break;
   default: {
@@ -322,7 +331,7 @@ string Value::get_string() const { return this->to_string(); }
 
 string_t Value::get_string_t() const
 {
-  ASSERT(attr_type_ == AttrType::CHARS, "attr type is not CHARS");
+  ASSERT(attr_type_ == AttrType::CHARS || attr_type_ == AttrType::TEXTS, "attr type is not CHARS or TEXTS");
   return string_t(value_.pointer_value_, length_);
 }
 

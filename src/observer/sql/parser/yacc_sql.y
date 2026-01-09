@@ -92,7 +92,13 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         STRING_T
         FLOAT_T
         DATE_T
+        TEXT_T
         VECTOR_T
+        MAX_T
+        MIN_T
+        COUNT_T
+        AVG_T
+        SUM_T
         HELP
         EXIT
         DOT //QUOTE
@@ -371,14 +377,14 @@ attr_def:
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = $4;
+      $$->length = ($$->type == AttrType::TEXTS) ? 4096 : $4;
     }
     | ID type
     {
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = 4;
+      $$->length = ($$->type == AttrType::TEXTS) ? 4096 : 4;
     }
     ;
 number:
@@ -389,6 +395,7 @@ type:
     | STRING_T { $$ = static_cast<int>(AttrType::CHARS); }
     | FLOAT_T  { $$ = static_cast<int>(AttrType::FLOATS); }
     | DATE_T   { $$ = static_cast<int>(AttrType::DATES); }
+    | TEXT_T   { $$ = static_cast<int>(AttrType::TEXTS); }
     | VECTOR_T { $$ = static_cast<int>(AttrType::VECTORS); }
     ;
 primary_key:
@@ -619,6 +626,21 @@ expression:
 aggregate_expression:
     ID LBRACE expression RBRACE {
       $$ = create_aggregate_expression($1, $3, sql_string, &@$);
+    }
+    | SUM_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("sum", $3, sql_string, &@$);
+    }
+    | AVG_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("avg", $3, sql_string, &@$);
+    }
+    | COUNT_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("count", $3, sql_string, &@$);
+    }
+    | MAX_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("max", $3, sql_string, &@$);
+    }
+    | MIN_T LBRACE expression RBRACE {
+      $$ = create_aggregate_expression("min", $3, sql_string, &@$);
     }
     ;
 
