@@ -94,6 +94,12 @@ struct SelectSqlNode
   vector<unique_ptr<Expression>> group_by;     ///< group by clause
 };
 
+struct JoinRelSqlNode
+{
+  vector<string>           relations;    ///< 通过 JOIN 链得到的所有表，顺序为出现顺序
+  vector<ConditionSqlNode> conditions;   ///< 所有 ON 条件，已用 AND 连接
+};
+
 /**
  * @brief 算术表达式计算的语法树
  * @ingroup SQLParser

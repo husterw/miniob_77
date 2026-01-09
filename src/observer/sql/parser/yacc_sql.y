@@ -74,6 +74,8 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         INDEX
         CALC
         SELECT
+        INNER
+        JOIN
         DESC
         SHOW
         SYNC
@@ -135,7 +137,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
   vector<ConditionSqlNode> *                 condition_list;
   vector<RelAttrSqlNode> *                   rel_attr_list;
   vector<vector<Value>> *                    values_list;
-  vector<string> *                           relation_list;
+  std::tuple<vector<string>, vector<ConditionSqlNode>> *relation_list;
   vector<string> *                           key_list;
   char *                                     cstring;
   int                                        number;
@@ -178,6 +180,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 %type <cstring>             storage_format
 %type <key_list>            primary_key
 %type <key_list>            attr_list
+%type <relation_list>       join_rela
 %type <relation_list>       rel_list
 %type <expression>          expression
 %type <expression>          aggregate_expression
@@ -521,11 +524,24 @@ select_stmt:        /*  select 语句的语法解析树*/
       }
 
       if ($4 != nullptr) {
-        $$->selection.relations.swap(*$4);
+        $$->selection.relations.swap(std::get<0>(*$4));
+        auto &rel_conditions = std::get<1>(*$4);
+        if ($5 != nullptr) {
+          $$->selection.conditions.reserve(rel_conditions.size() + $5->size());
+          $$->selection.conditions.insert($$->selection.conditions.end(), 
+                                         rel_conditions.begin(), 
+                                         rel_conditions.end());
+          $$->selection.conditions.insert($$->selection.conditions.end(), 
+                                         $5->begin(), 
+                                         $5->end());
+          delete $5;
+        } else {
+          // 如果$5为空
+          $$->selection.conditions.swap(rel_conditions);
+        }
         delete $4;
-      }
-
-      if ($5 != nullptr) {
+      } else if ($5 != nullptr) {
+        // 如果$4为空但$5不为空
         $$->selection.conditions.swap(*$5);
         delete $5;
       }
@@ -623,21 +639,45 @@ relation:
       $$ = $1;
     }
     ;
-rel_list:
-    relation {
-      $$ = new vector<string>();
-      $$->push_back($1);
-    }
-    | relation COMMA rel_list {
-      if ($3 != nullptr) {
-        $$ = $3;
-      } else {
-        $$ = new vector<string>;
-      }
 
-      $$->insert($$->begin(), $1);
+join_rela:
+  relation {
+    $$ = new tuple<vector<string>, vector<ConditionSqlNode>>;
+    vector<string> &relations = std::get<0>(*$$);
+    relations.push_back($1);
+  }
+  | join_rela INNER JOIN relation ON condition_list {
+    $$ = $1;
+    std::get<0>(*$$).push_back($4);
+    if ($6 != nullptr) {
+      vector<ConditionSqlNode> &conditions = std::get<1>(*$$);
+      conditions.insert(conditions.end(), $6->begin(), $6->end());
+      delete $6;
     }
-    ;
+  }
+  | join_rela INNER JOIN relation {
+    $$ = $1;
+    std::get<0>(*$$).push_back($4);
+  }
+  ;
+
+rel_list:
+  join_rela {
+    $$ = $1;
+  }
+  | rel_list COMMA join_rela {
+    $$ = $1;
+    vector<string> &relations = std::get<0>(*$$);
+    vector<ConditionSqlNode> &conditions = std::get<1>(*$$);
+    
+    const vector<string> &new_relations = std::get<0>(*$3);
+    const vector<ConditionSqlNode> &new_conditions = std::get<1>(*$3);
+    
+    relations.insert(relations.end(), new_relations.begin(), new_relations.end());
+    conditions.insert(conditions.end(), new_conditions.begin(), new_conditions.end());
+    delete $3;
+  }
+  ;
 
 where:
     /* empty */
