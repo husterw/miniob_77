@@ -22,7 +22,11 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/calc_physical_operator.h"
 #include "sql/operator/delete_logical_operator.h"
 #include "sql/operator/delete_physical_operator.h"
+#include "sql/operator/update_logical_operator.h"
+#include "sql/operator/update_physical_operator.h"
 #include "sql/operator/predicate_logical_operator.h"
+#include "storage/table/table.h"
+#include "storage/field/field_meta.h"
 #include "sql/operator/predicate_physical_operator.h"
 #include "sql/operator/group_by_logical_operator.h"
 #include "sql/operator/scalar_group_by_physical_operator.h"
@@ -169,6 +173,39 @@ void LogicalDeleteToDelete::transform(OperatorNode* input,
   }
 
   transformed->emplace_back(std::move(delete_phys_oper));
+}
+
+// -------------------------------------------------------------------------------------------------
+// PhysicalUpdate
+// -------------------------------------------------------------------------------------------------
+LogicalUpdateToUpdate::LogicalUpdateToUpdate()
+{
+  type_ = RuleType::UPDATE_TO_PHYSICAL;
+  match_pattern_ = unique_ptr<Pattern>(new Pattern(OpType::LOGICALUPDATE));
+  auto child = new Pattern(OpType::LEAF);
+  match_pattern_->add_child(child);
+}
+
+void LogicalUpdateToUpdate::transform(OperatorNode* input,
+                         std::vector<std::unique_ptr<OperatorNode>> *transformed,
+                         OptimizerContext *context) const
+{
+  auto update_oper = dynamic_cast<UpdateLogicalOperator*>(input);
+
+  Table *table = update_oper->table();
+  const FieldMeta *field_meta = table->table_meta().field(update_oper->field_name().c_str());
+  if (nullptr == field_meta) {
+    // This should not happen if the logical plan was created correctly
+    return;
+  }
+
+  auto update_phys_oper = unique_ptr<PhysicalOperator>(
+      new UpdatePhysicalOperator(table, field_meta, update_oper->value()));
+  for (auto &child : update_oper->children()) {
+    update_phys_oper->add_general_child(child.get());
+  }
+
+  transformed->emplace_back(std::move(update_phys_oper));
 }
 
 // -------------------------------------------------------------------------------------------------

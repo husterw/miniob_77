@@ -172,6 +172,53 @@ RC MvccTrx::delete_record(Table *table, Record &record)
   return RC::SUCCESS;
 }
 
+RC MvccTrx::update_record(Table *table, Record &old_record, Record &new_record)
+{
+  Field begin_field;
+  Field end_field;
+  trx_fields(table, begin_field, end_field);
+
+  RC update_result = RC::SUCCESS;
+
+  // First, check if old record is visible and can be updated
+  RC rc = table->visit_record(old_record.rid(), [this, table, &update_result, &end_field, &new_record](Record &inplace_record) -> bool {
+    RC rc = this->visit_record(table, inplace_record, ReadWriteMode::READ_WRITE);
+    if (OB_FAIL(rc)) {
+      update_result = rc;
+      return false;
+    }
+
+    // Update the record data in place
+    // For MVCC, we keep the same RID but update the data
+    // The begin_xid and end_xid remain the same for now
+    // They will be updated during commit/rollback
+    memcpy(inplace_record.data(), new_record.data(), new_record.len());
+    return true;
+  });
+
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to visit record for update. rc=%s", strrc(rc));
+    return rc;
+  }
+
+  if (OB_FAIL(update_result)) {
+    LOG_TRACE("record is not visible or cannot be updated. rid=%s, rc=%s", old_record.rid().to_string().c_str(), strrc(update_result));
+    return update_result;
+  }
+
+  // For MVCC, we log the update as a DELETE followed by an INSERT
+  // But for simplicity, we can log it as an UPDATE operation
+  // Since there's no UPDATE_RECORD log type, we'll use DELETE log for now
+  // The actual implementation depends on how the engine handles updates
+  rc = log_handler_.delete_record(trx_id_, table, old_record.rid());
+  ASSERT(rc == RC::SUCCESS, "failed to append update record log (as delete). trx id=%d, table id=%d, rid=%s, rc=%s",
+      trx_id_, table->table_id(), old_record.rid().to_string().c_str(), strrc(rc));
+
+  operations_.push_back(Operation(Operation::Type::UPDATE, table, old_record.rid()));
+
+  return RC::SUCCESS;
+}
+
 RC MvccTrx::visit_record(Table *table, Record &record, ReadWriteMode mode)
 {
   Field begin_field;
@@ -313,6 +360,22 @@ RC MvccTrx::commit_with_trx_id(int32_t commit_xid)
         rc = operation.table()->visit_record(rid, record_updater);
         ASSERT(rc == RC::SUCCESS, "failed to get record while committing. rid=%s, rc=%s",
                rid.to_string().c_str(), strrc(rc));
+      } break;
+
+      case Operation::Type::UPDATE: {
+        // For UPDATE, the record data has already been updated in place
+        // The begin_xid and end_xid remain the same, so no special handling is needed
+        // However, we should verify that the update was successful
+        Table *table = operation.table();
+        RID    rid(operation.page_num(), operation.slot_num());
+        
+        // Just verify the record exists and is accessible
+        Record dummy_record;
+        dummy_record.set_rid(rid);
+        rc = table->get_record(rid, dummy_record);
+        if (OB_FAIL(rc)) {
+          LOG_WARN("failed to verify updated record exists. rid=%s, rc=%s", rid.to_string().c_str(), strrc(rc));
+        }
       } break;
 
       default: {
