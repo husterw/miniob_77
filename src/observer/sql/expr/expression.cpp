@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/expression.h"
 #include "sql/expr/tuple.h"
 #include "sql/expr/arithmetic_operator.hpp"
+#include "sql/expr/subquery_expr.h"
 
 using namespace std;
 
@@ -198,6 +199,61 @@ RC ComparisonExpr::try_get_value(Value& cell) const
 
 RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
 {
+  // 处理 IN/NOT IN 操作
+  if (comp_ == IN_OP || comp_ == NOT_IN_OP) {
+    Value left_value;
+    RC rc = left_->get_value(tuple, left_value);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to get value of left expression. rc=%s", strrc(rc));
+      return rc;
+    }
+
+    // 检查右表达式是否为子查询
+    if (right_->type() == ExprType::SUBQUERY) {
+      SubQueryExpr *subquery_expr = static_cast<SubQueryExpr *>(right_.get());
+      vector<Value> subquery_values;
+      rc = subquery_expr->execute(subquery_values);
+      if (OB_FAIL(rc)) {
+        LOG_WARN("failed to execute subquery. rc=%s", strrc(rc));
+        return rc;
+      }
+
+      // 检查 left_value 是否在 subquery_values 中
+      bool found = false;
+      bool has_null = false;
+      for (const Value &v : subquery_values) {
+        if (v.is_null()) {
+          has_null = true;
+          continue;
+        }
+        if (left_value.compare(v) == 0) {
+          found = true;
+          break;
+        }
+      }
+
+      bool result = false;
+      if (comp_ == IN_OP) {
+        result = found;
+        // NOT IN 的特殊性：如果遇到 NULL，结果为 NULL (false)
+        // 这里简化处理，如果有 NULL 且没找到匹配，返回 false
+      } else {  // NOT_IN_OP
+        if (has_null && !found) {
+          result = false;  // NULL 存在时，NOT IN 结果为 false
+        } else {
+          result = !found;
+        }
+      }
+
+      value.set_boolean(result);
+      return RC::SUCCESS;
+    } else {
+      LOG_WARN("IN/NOT IN right operand should be a subquery");
+      return RC::INVALID_ARGUMENT;
+    }
+  }
+
+  // 处理普通比较操作
   Value left_value;
   Value right_value;
 
@@ -206,14 +262,25 @@ RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
     LOG_WARN("failed to get value of left expression. rc=%s", strrc(rc));
     return rc;
   }
-  rc = right_->get_value(tuple, right_value);
-  if (rc != RC::SUCCESS) {
-    LOG_WARN("failed to get value of right expression. rc=%s", strrc(rc));
-    return rc;
+
+  // 检查右表达式是否为子查询
+  if (right_->type() == ExprType::SUBQUERY) {
+    SubQueryExpr *subquery_expr = static_cast<SubQueryExpr *>(right_.get());
+    rc = subquery_expr->execute_single(right_value);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to execute subquery for single value. rc=%s", strrc(rc));
+      return rc;
+    }
+    // 如果子查询返回空，right_value 可能是 NULL
+  } else {
+    rc = right_->get_value(tuple, right_value);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to get value of right expression. rc=%s", strrc(rc));
+      return rc;
+    }
   }
 
   bool bool_value = false;
-
   rc = compare_value(left_value, right_value, bool_value);
   if (rc == RC::SUCCESS) {
     value.set_boolean(bool_value);
