@@ -17,6 +17,9 @@ See the Mulan PSL v2 for more details. */
 #include "common/lang/ranges.h"
 #include "sql/parser/expression_binder.h"
 #include "sql/expr/expression_iterator.h"
+#include "sql/stmt/select_stmt.h"
+#include "sql/expr/subquery_expr.h"
+#include "sql/parser/parse_defs.h"
 
 using namespace common;
 
@@ -88,6 +91,10 @@ RC ExpressionBinder::bind_expression(unique_ptr<Expression> &expr, vector<unique
 
     case ExprType::AGGREGATION: {
       ASSERT(false, "shouldn't be here");
+    } break;
+
+    case ExprType::UNBOUND_SUBQUERY: {
+      return bind_subquery_expression(expr, bound_expressions);
     } break;
 
     default: {
@@ -445,5 +452,114 @@ RC ExpressionBinder::bind_aggregate_expression(
   }
 
   bound_expressions.emplace_back(std::move(aggregate_expr));
+  return RC::SUCCESS;
+}
+
+RC ExpressionBinder::bind_subquery_expression(
+    unique_ptr<Expression> &expr, vector<unique_ptr<Expression>> &bound_expressions)
+{
+  if (nullptr == expr) {
+    return RC::SUCCESS;
+  }
+
+  auto unbound_subquery_expr = static_cast<UnboundSubQueryExpr *>(expr.get());
+  
+  // 优先使用保存的 ParsedSqlNode，因为它包含未移动的原始表达式
+  ParsedSqlNode *parsed_node = unbound_subquery_expr->parsed_node();
+  SelectSqlNode *select_sql = nullptr;
+  
+  if (parsed_node != nullptr) {
+    // 使用保存的 ParsedSqlNode 中的 SelectSqlNode
+    select_sql = &parsed_node->selection;
+    LOG_TRACE("using parsed_node for subquery, expressions size=%d", select_sql->expressions.size());
+  } else {
+    // 回退到原来的方式（可能已经失效）
+    select_sql = unbound_subquery_expr->select_sql();
+    LOG_TRACE("using select_sql directly, expressions size=%d", 
+              select_sql ? select_sql->expressions.size() : 0);
+  }
+  
+  if (nullptr == select_sql) {
+    LOG_WARN("subquery select_sql is null");
+    return RC::INVALID_ARGUMENT;
+  }
+  
+  // 检查表达式是否为空（可能已被移动）
+  if (select_sql->expressions.empty()) {
+    LOG_WARN("subquery expressions is empty. parsed_node=%p", parsed_node);
+    return RC::INVALID_ARGUMENT;
+  }
+
+  // 获取 db
+  Db *db = context_.db();
+  if (nullptr == db) {
+    LOG_WARN("db is null for subquery");
+    return RC::INVALID_ARGUMENT;
+  }
+
+  // 复制 SelectSqlNode，因为原始节点可能被共享或修改
+  SelectSqlNode subquery_sql_copy;
+  
+  // 复制 expressions
+  for (const auto &expr : select_sql->expressions) {
+    if (expr) {
+      subquery_sql_copy.expressions.push_back(expr->copy());
+    } else {
+      LOG_WARN("subquery expression is null");
+    }
+  }
+  
+  if (subquery_sql_copy.expressions.empty()) {
+    LOG_WARN("subquery_sql_copy expressions is empty after copying. original size=%d", 
+             select_sql->expressions.size());
+    return RC::INVALID_ARGUMENT;
+  }
+  
+  // 复制 relations
+  subquery_sql_copy.relations = select_sql->relations;
+  
+  // 复制 conditions（不包括子查询条件，避免递归问题）
+  for (const auto &c : select_sql->conditions) {
+    if (!c.right_is_subquery) {
+      subquery_sql_copy.conditions.push_back(c);
+    }
+  }
+  
+  // 复制 group_by
+  for (const auto &gb : select_sql->group_by) {
+    if (gb) {
+      subquery_sql_copy.group_by.push_back(gb->copy());
+    }
+  }
+  
+  // 复制 order_by
+  for (const auto &ob : select_sql->order_by) {
+    if (ob.expression) {
+      OrderBySqlNode ob_copy;
+      ob_copy.expression = ob.expression->copy();
+      ob_copy.asc = ob.asc;
+      subquery_sql_copy.order_by.push_back(std::move(ob_copy));
+    }
+  }
+
+  SelectStmt *subquery_stmt = nullptr;
+  RC rc = SelectStmt::create(db, subquery_sql_copy, reinterpret_cast<Stmt *&>(subquery_stmt));
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to create subquery SelectStmt. rc=%s", strrc(rc));
+    return rc;
+  }
+
+  // 验证子查询是否成功创建并包含表达式
+  if (subquery_stmt->query_expressions().empty()) {
+    LOG_WARN("subquery SelectStmt created but query_expressions is empty");
+    delete subquery_stmt;
+    return RC::INTERNAL;
+  }
+
+  // 创建 SubQueryExpr
+  unique_ptr<SelectStmt> subquery_stmt_ptr(subquery_stmt);
+  auto subquery_expr = make_unique<SubQueryExpr>(std::move(subquery_stmt_ptr));
+  subquery_expr->set_name(unbound_subquery_expr->name());
+  bound_expressions.emplace_back(std::move(subquery_expr));
   return RC::SUCCESS;
 }

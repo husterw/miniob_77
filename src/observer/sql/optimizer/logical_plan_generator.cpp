@@ -103,10 +103,14 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
   last_oper = &table_oper;
   unique_ptr<LogicalOperator> predicate_oper;
 
-  RC rc = create_plan(select_stmt->filter_stmt(), predicate_oper);
-  if (OB_FAIL(rc)) {
-    LOG_WARN("failed to create predicate logical plan. rc=%s", strrc(rc));
-    return rc;
+  RC rc = RC::SUCCESS;
+  // 只有当 filter_stmt 不为空时才创建 predicate logical plan
+  if (select_stmt->filter_stmt() != nullptr) {
+    rc = create_plan(select_stmt->filter_stmt(), predicate_oper);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to create predicate logical plan. rc=%s", strrc(rc));
+      return rc;
+    }
   }
 
   const vector<Table *> &tables = select_stmt->tables();
@@ -124,11 +128,47 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
   }
 
 
-  if (predicate_oper) {
+  // 处理子查询条件
+  const vector<unique_ptr<Expression>> &subquery_conditions = select_stmt->subquery_conditions();
+  unique_ptr<LogicalOperator> subquery_combined_oper;  // 在循环外部声明，确保作用域足够
+  
+  if (!subquery_conditions.empty()) {
+    // 如果有普通条件，先处理普通条件
+    if (predicate_oper) {
+      if (*last_oper) {
+        predicate_oper->add_child(std::move(*last_oper));
+      }
+      last_oper = &predicate_oper;
+    }
+
+    // 为每个子查询条件创建 PredicateLogicalOperator
+    // 逐个处理子查询条件，将前一个作为后一个的子节点
+    for (size_t i = 0; i < subquery_conditions.size(); i++) {
+      // 在循环外部创建表达式副本，避免在 copy() 过程中访问已销毁的栈变量
+      unique_ptr<Expression> copied_expr = subquery_conditions[i]->copy();
+      unique_ptr<LogicalOperator> subquery_predicate_oper = 
+          make_unique<PredicateLogicalOperator>(std::move(copied_expr));
+      
+      if (i == 0) {
+        // 第一个子查询条件，添加 last_oper 作为子节点
+        if (*last_oper) {
+          subquery_predicate_oper->add_child(std::move(*last_oper));
+        }
+        subquery_combined_oper = std::move(subquery_predicate_oper);
+      } else {
+        // 后续的子查询条件，将前一个作为子节点
+        subquery_predicate_oper->add_child(std::move(subquery_combined_oper));
+        subquery_combined_oper = std::move(subquery_predicate_oper);
+      }
+    }
+    
+    // 更新 last_oper 指向组合后的子查询 operator
+    last_oper = &subquery_combined_oper;
+  } else if (predicate_oper) {
+    // 只有普通条件
     if (*last_oper) {
       predicate_oper->add_child(std::move(*last_oper));
     }
-
     last_oper = &predicate_oper;
   }
 
@@ -142,6 +182,7 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
   if (group_by_oper) {
     if (*last_oper) {
       group_by_oper->add_child(std::move(*last_oper));
+      // 注意：move 后，*last_oper 变为 nullptr，但 last_oper 指针仍然有效
     }
 
     last_oper = &group_by_oper;
@@ -175,6 +216,12 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
 
 RC LogicalPlanGenerator::create_plan(FilterStmt *filter_stmt, unique_ptr<LogicalOperator> &logical_operator)
 {
+  if (nullptr == filter_stmt) {
+    // 如果没有 filter_stmt，返回空 operator
+    logical_operator = nullptr;
+    return RC::SUCCESS;
+  }
+
   RC                                  rc = RC::SUCCESS;
   vector<unique_ptr<Expression>> cmp_exprs;
   const vector<FilterUnit *>    &filter_units = filter_stmt->filter_units();

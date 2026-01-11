@@ -24,6 +24,7 @@ See the Mulan PSL v2 for more details. */
 
 class Tuple;
 class SelectStmt;
+struct SelectSqlNode;
 
 /**
  * @defgroup Expression
@@ -40,6 +41,7 @@ enum class ExprType
   STAR,                 ///< 星号，表示所有字段
   UNBOUND_FIELD,        ///< 未绑定的字段，需要在resolver阶段解析为FieldExpr
   UNBOUND_AGGREGATION,  ///< 未绑定的聚合函数，需要在resolver阶段解析为AggregateExpr
+  UNBOUND_SUBQUERY,     ///< 未绑定的子查询，需要在resolver阶段解析为SubQueryExpr
 
   FIELD,        ///< 字段。在实际执行时，根据行数据内容提取对应字段的值
   VALUE,        ///< 常量值
@@ -467,6 +469,40 @@ private:
   unique_ptr<Expression> child_;
 };
 
+/**
+ * @brief 未绑定的子查询表达式
+ * @ingroup Expression
+ */
+class ParsedSqlNode;  // 前向声明
+
+class UnboundSubQueryExpr : public Expression
+{
+public:
+  UnboundSubQueryExpr(SelectSqlNode *select_sql, ParsedSqlNode *parsed_node = nullptr) 
+    : select_sql_(select_sql), parsed_node_(parsed_node) {}
+
+  virtual ~UnboundSubQueryExpr() = default;
+
+  ExprType type() const override { return ExprType::UNBOUND_SUBQUERY; }
+  AttrType value_type() const override { return AttrType::UNDEFINED; }
+
+  unique_ptr<Expression> copy() const override
+  {
+    // 注意：这里需要复制 SelectSqlNode，但为了简化，暂时不复制
+    // 实际使用时应该确保 select_sql_ 在绑定完成前有效
+    return make_unique<UnboundSubQueryExpr>(select_sql_, parsed_node_);
+  }
+
+  RC get_value(const Tuple &tuple, Value &value) const override { return RC::INTERNAL; }
+
+  SelectSqlNode *select_sql() const { return select_sql_; }
+  ParsedSqlNode *parsed_node() const { return parsed_node_; }
+
+private:
+  SelectSqlNode *select_sql_;  ///< 子查询的 SQL 节点，注意这里不拥有所有权
+  ParsedSqlNode *parsed_node_;  ///< 保存子查询的 ParsedSqlNode，防止被过早释放
+};
+
 class AggregateExpr : public Expression
 {
 public:
@@ -531,43 +567,5 @@ private:
   unique_ptr<Expression> child_;
 };
 
-/**
- * @brief 子查询表达式
- * @ingroup Expression
- */
-class SubQueryExpr : public Expression
-{
-public:
-  SubQueryExpr(SelectStmt *select_stmt);
-  virtual ~SubQueryExpr();
-
-  ExprType type() const override { return ExprType::SUBQUERY; }
-
-  unique_ptr<Expression> copy() const override
-  {
-    // 子查询表达式不应该被复制，因为包含完整的查询语句
-    // 如果需要复制，需要深度复制 SelectStmt
-    return make_unique<SubQueryExpr>(select_stmt_);
-  }
-
-  RC get_value(const Tuple &tuple, Value &value) const override;
-  
-  /**
-   * @brief 执行子查询并获取结果值列表（用于 IN/NOT IN）
-   * @param values 输出的值列表
-   */
-  RC execute(vector<Value> &values) const;
-
-  /**
-   * @brief 执行子查询并获取单个值（用于比较运算）
-   * @param value 输出的值
-   */
-  RC execute_single(Value &value) const;
-
-  AttrType value_type() const override;
-
-  SelectStmt *select_stmt() const { return select_stmt_; }
-
-private:
-  SelectStmt *select_stmt_;  ///< 子查询语句，注意这里不拥有所有权，由外部管理
-};
+// SubQueryExpr 定义在 subquery_expr.h 中
+class SubQueryExpr;

@@ -23,6 +23,10 @@ See the Mulan PSL v2 for more details. */
 class Db;
 class Table;
 class FieldMeta;
+class RelAttrSqlNode;
+
+RC get_table_and_field(Db *db, Table *default_table, unordered_map<string, Table *> *tables,
+    const RelAttrSqlNode &attr, Table *&table, const FieldMeta *&field);
 
 struct FilterObj
 {

@@ -1,10 +1,11 @@
 
 %{
-
+ 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <functional>
+ 
 #include "common/log/log.h"
 #include "common/lang/string.h"
 #include "common/type/date_type.h"
@@ -12,7 +13,7 @@
 #include "sql/parser/yacc_sql.hpp"
 #include "sql/parser/lex_sql.h"
 #include "sql/expr/expression.h"
-
+ 
 using namespace std;
 
 string token_name(const char *sql_string, YYLTYPE *llocp)
@@ -71,6 +72,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         GROUP
         ORDER
         ASC
+        NOT
         TABLE
         TABLES
         INDEX
@@ -104,6 +106,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         HELP
         EXIT
         DOT //QUOTE
+        IN
         INTO
         VALUES
         FROM
@@ -536,6 +539,53 @@ select_stmt:        /*  select 语句的语法解析树*/
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
         $$->selection.expressions.swap(*$2);
+        
+        // 递归保存表达式列表中的子查询 ParsedSqlNode（包括嵌套的）
+        function<void(Expression *)> collect_subqueries = [&](Expression *expr) {
+          if (expr == nullptr) return;
+          if (expr->type() == ExprType::UNBOUND_SUBQUERY) {
+            UnboundSubQueryExpr *subquery_expr = static_cast<UnboundSubQueryExpr *>(expr);
+            ParsedSqlNode *parsed_node = subquery_expr->parsed_node();
+            if (parsed_node != nullptr) {
+              $$->subquery_nodes.emplace_back(parsed_node);
+            }
+          } else {
+            // 递归查找子表达式中的子查询
+            switch (expr->type()) {
+              case ExprType::ARITHMETIC: {
+                ArithmeticExpr *arith = static_cast<ArithmeticExpr *>(expr);
+                if (arith->left()) collect_subqueries(arith->left().get());
+                if (arith->right()) collect_subqueries(arith->right().get());
+              } break;
+              case ExprType::CAST: {
+                CastExpr *cast = static_cast<CastExpr *>(expr);
+                if (cast->child()) collect_subqueries(cast->child().get());
+              } break;
+              case ExprType::COMPARISON: {
+                ComparisonExpr *cmp = static_cast<ComparisonExpr *>(expr);
+                if (cmp->left()) collect_subqueries(cmp->left().get());
+                if (cmp->right()) collect_subqueries(cmp->right().get());
+              } break;
+              case ExprType::CONJUNCTION: {
+                ConjunctionExpr *conj = static_cast<ConjunctionExpr *>(expr);
+                for (auto &child : conj->children()) {
+                  collect_subqueries(child.get());
+                }
+              } break;
+              case ExprType::UNBOUND_AGGREGATION: {
+                UnboundAggregateExpr *agg = static_cast<UnboundAggregateExpr *>(expr);
+                if (agg->child()) collect_subqueries(agg->child().get());
+              } break;
+              default:
+                break;
+            }
+          }
+        };
+        
+        for (const auto &expr : $$->selection.expressions) {
+          collect_subqueries(expr.get());
+        }
+        
         delete $2;
       }
 
@@ -550,15 +600,43 @@ select_stmt:        /*  select 语句的语法解析树*/
           $$->selection.conditions.insert($$->selection.conditions.end(), 
                                          $5->begin(), 
                                          $5->end());
+          
+          // 保存子查询的 ParsedSqlNode，防止被过早释放
+          for (const ConditionSqlNode &cond : *$5) {
+            if (cond.right_is_subquery && cond.right_subquery_node != nullptr) {
+              $$->subquery_nodes.emplace_back(cond.right_subquery_node);
+            }
+          }
+          // 同时检查 rel_conditions 中的子查询
+          for (const ConditionSqlNode &cond : rel_conditions) {
+            if (cond.right_is_subquery && cond.right_subquery_node != nullptr) {
+              $$->subquery_nodes.emplace_back(cond.right_subquery_node);
+            }
+          }
+          
           delete $5;
         } else {
           // 如果$5为空
           $$->selection.conditions.swap(rel_conditions);
+          // 保存 rel_conditions 中的子查询节点
+          for (const ConditionSqlNode &cond : rel_conditions) {
+            if (cond.right_is_subquery && cond.right_subquery_node != nullptr) {
+              $$->subquery_nodes.emplace_back(cond.right_subquery_node);
+            }
+          }
         }
         delete $4;
       } else if ($5 != nullptr) {
         // 如果$4为空但$5不为空
         $$->selection.conditions.swap(*$5);
+        
+        // 保存子查询的 ParsedSqlNode
+        for (const ConditionSqlNode &cond : *$5) {
+          if (cond.right_is_subquery && cond.right_subquery_node != nullptr) {
+            $$->subquery_nodes.emplace_back(cond.right_subquery_node);
+          }
+        }
+        
         delete $5;
       }
 
@@ -634,6 +712,14 @@ expression:
     }
     | aggregate_expression {
       $$ = $1;
+    }
+    | LBRACE select_stmt RBRACE {
+      // 子查询表达式
+      SelectSqlNode *select_sql = &$2->selection;
+      $$ = new UnboundSubQueryExpr(select_sql, $2);
+      $$->set_name(token_name(sql_string, &@$));
+      // 注意：不删除 $2，需要在外层 select_stmt 中保存 ParsedSqlNode
+      // 通过 parsed_node_ 指针保存，外层会将其添加到 subquery_nodes 中
     }
     ;
 
@@ -748,6 +834,7 @@ condition:
       $$->left_attr = *$1;
       $$->right_is_attr = 0;
       $$->right_value = *$3;
+      $$->right_is_subquery = 0;
       $$->comp = $2;
 
       delete $1;
@@ -760,6 +847,7 @@ condition:
       $$->left_value = *$1;
       $$->right_is_attr = 0;
       $$->right_value = *$3;
+      $$->right_is_subquery = 0;
       $$->comp = $2;
 
       delete $1;
@@ -772,6 +860,7 @@ condition:
       $$->left_attr = *$1;
       $$->right_is_attr = 1;
       $$->right_attr = *$3;
+      $$->right_is_subquery = 0;
       $$->comp = $2;
 
       delete $1;
@@ -784,10 +873,63 @@ condition:
       $$->left_value = *$1;
       $$->right_is_attr = 1;
       $$->right_attr = *$3;
+      $$->right_is_subquery = 0;
       $$->comp = $2;
 
       delete $1;
       delete $3;
+    }
+    | rel_attr IN LBRACE select_stmt RBRACE
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$4->selection;
+      $$->right_subquery_node = $4;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      $$->comp = IN_OP;
+      delete $1;
+      // 不删除 $4，因为 right_subquery_node 需要保持有效
+    }
+    | rel_attr NOT IN LBRACE select_stmt RBRACE
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$5->selection;
+      $$->right_subquery_node = $5;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      $$->comp = NOT_IN_OP;
+      delete $1;
+      // 不删除 $5，因为 right_subquery_node 需要保持有效
+    }
+    | rel_attr comp_op LBRACE select_stmt RBRACE
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$4->selection;
+      $$->right_subquery_node = $4;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      $$->comp = $2;
+      delete $1;
+      // 不删除 $4，因为 right_subquery_node 需要保持有效
+    }
+    | value comp_op LBRACE select_stmt RBRACE
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 0;
+      $$->left_value = *$1;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$4->selection;
+      $$->right_subquery_node = $4;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      $$->comp = $2;
+      delete $1;
+      // 不删除 $4，因为 right_subquery_node 需要保持有效
     }
     ;
 
@@ -798,6 +940,8 @@ comp_op:
     | LE { $$ = LESS_EQUAL; }
     | GE { $$ = GREAT_EQUAL; }
     | NE { $$ = NOT_EQUAL; }
+    | IN { $$ = IN_OP; }
+    | NOT IN { $$ = NOT_IN_OP; }
     ;
 
 // your code here

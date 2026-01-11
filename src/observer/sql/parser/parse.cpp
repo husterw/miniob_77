@@ -22,6 +22,11 @@ ParsedSqlNode::ParsedSqlNode() : flag(SCF_ERROR) {}
 
 ParsedSqlNode::ParsedSqlNode(SqlCommandFlag _flag) : flag(_flag) {}
 
+ParsedSqlNode::~ParsedSqlNode()
+{
+  // subquery_nodes 会自动清理，因为使用的是 unique_ptr
+}
+
 void ParsedSqlResult::add_sql_node(unique_ptr<ParsedSqlNode> sql_node)
 {
   sql_nodes_.emplace_back(std::move(sql_node));

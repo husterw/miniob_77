@@ -222,11 +222,37 @@ RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
       bool found = false;
       bool has_null = false;
       for (const Value &v : subquery_values) {
-        if (v.is_null()) {
+        if (v.attr_type() == AttrType::UNDEFINED) {
           has_null = true;
           continue;
         }
-        if (left_value.compare(v) == 0) {
+        // 尝试比较，如果类型不兼容，尝试类型转换
+        int cmp_result = left_value.compare(v);
+        if (cmp_result == INT32_MAX) {
+          // 类型不兼容，尝试类型转换后比较
+          // 先尝试将 v 转换为 left_value 的类型
+          Value converted_v;
+          RC cast_rc = Value::cast_to(v, left_value.attr_type(), converted_v);
+          if (cast_rc == RC::SUCCESS) {
+            cmp_result = left_value.compare(converted_v);
+          }
+          // 如果第一次转换失败或仍然不兼容，尝试将 left_value 转换为 v 的类型
+          if (cmp_result == INT32_MAX) {
+            Value converted_left;
+            cast_rc = Value::cast_to(left_value, v.attr_type(), converted_left);
+            if (cast_rc == RC::SUCCESS) {
+              cmp_result = converted_left.compare(v);
+            }
+          }
+          // 如果类型转换和比较都失败，跳过这个值
+          if (cmp_result == INT32_MAX) {
+            LOG_WARN("cannot compare values: left_type=%d, right_type=%d", 
+                     static_cast<int>(left_value.attr_type()), 
+                     static_cast<int>(v.attr_type()));
+            continue;
+          }
+        }
+        if (cmp_result == 0) {
           found = true;
           break;
         }

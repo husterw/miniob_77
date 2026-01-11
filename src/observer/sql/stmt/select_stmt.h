@@ -41,6 +41,7 @@ public:
 public:
   const vector<Table *> &tables() const { return tables_; }
   FilterStmt            *filter_stmt() const { return filter_stmt_; }
+  const vector<unique_ptr<Expression>> &subquery_conditions() const { return subquery_conditions_; }
 
   vector<unique_ptr<Expression>> &query_expressions() { return query_expressions_; }
   vector<unique_ptr<Expression>> &group_by() { return group_by_; }
@@ -52,4 +53,5 @@ private:
   FilterStmt                    *filter_stmt_ = nullptr;
   vector<unique_ptr<Expression>> group_by_;
   vector<pair<unique_ptr<Expression>, bool>> order_by_;  ///< order by clause: expression and is_asc
+  vector<unique_ptr<Expression>> subquery_conditions_;   ///< 包含子查询的条件表达式
 };

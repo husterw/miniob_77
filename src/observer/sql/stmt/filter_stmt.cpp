@@ -108,7 +108,16 @@ RC FilterStmt::create_filter_unit(Db *db, Table *default_table, unordered_map<st
     filter_unit->set_left(filter_obj);
   }
 
-  if (condition.right_is_attr) {
+  if (condition.right_is_subquery) {
+    // 子查询的情况，在 LogicalPlanGenerator 中处理
+    // 这里暂时设置一个占位值，实际处理会在 LogicalPlanGenerator 中通过表达式系统完成
+    FilterObj filter_obj;
+    // 对于子查询，right_is_subquery 会在 LogicalPlanGenerator 中识别并处理
+    filter_obj.init_value(Value());  // 占位值
+    filter_unit->set_right(filter_obj);
+    // 注意：需要在 FilterUnit 中添加字段来标识子查询
+    // 但由于架构限制，我们将在 LogicalPlanGenerator 中通过检查 ConditionSqlNode 来处理
+  } else if (condition.right_is_attr) {
     Table           *table = nullptr;
     const FieldMeta *field = nullptr;
     rc                     = get_table_and_field(db, default_table, tables, condition.right_attr, table, field);
