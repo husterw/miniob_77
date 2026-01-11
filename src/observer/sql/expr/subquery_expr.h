@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/expression.h"
 
 class SelectStmt;
+class LogicalOperator;
 
 // 空的删除器，用于不拥有所有权的 unique_ptr
 struct NoopSelectStmtDeleter {
@@ -39,7 +40,15 @@ public:
     // 注意：这里返回的副本与原对象共享同一个 SelectStmt 指针，但所有权仍由原对象管理
     // 这在当前实现中是可以接受的，因为表达式通常在逻辑计划阶段被使用，且不会被多次执行
     // 如果未来需要真正的深度复制，需要实现 SelectStmt 的复制构造函数
-    return make_unique<SubQueryExpr>(select_stmt_.get());
+    auto copy_expr = make_unique<SubQueryExpr>(select_stmt_.get());
+    copy_expr->expected_column_count_ = expected_column_count_;  // 复制预期的列数
+    // 复制保存的表达式副本，以便副本也能恢复表达式
+    for (const auto &expr : saved_expressions_) {
+      if (expr) {
+        copy_expr->saved_expressions_.push_back(expr->copy());
+      }
+    }
+    return copy_expr;
   }
 
   RC get_value(const Tuple &tuple, Value &value) const override;
@@ -64,4 +73,12 @@ private:
   // 使用自定义删除器类型：拥有所有权时使用 default_delete，不拥有所有权时使用 NoopSelectStmtDeleter
   unique_ptr<SelectStmt, NoopSelectStmtDeleter> select_stmt_;  ///< 子查询语句
   bool owns_select_stmt_;  ///< 是否拥有 SelectStmt 的所有权
+  int expected_column_count_;  ///< 预期的列数（在构造时保存，因为表达式可能被移动）
+  
+  // 保存 SelectStmt 表达式的副本，用于在表达式被移动后恢复
+  // 当同一个 SelectStmt 被多次用于创建逻辑计划时，我们需要能够恢复表达式
+  mutable vector<unique_ptr<Expression>> saved_expressions_;
+  
+  // 恢复 SelectStmt 的表达式（如果已被移动）
+  void restore_expressions() const;
 };
