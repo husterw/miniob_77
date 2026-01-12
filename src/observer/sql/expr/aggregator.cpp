@@ -81,7 +81,13 @@ RC CountAggregator::accumulate(const Value& value)
 
 RC CountAggregator::evaluate(Value& result)
 {
-  result = value_;
+  // 如果没有累积任何值（空输入），COUNT 应该返回 0，而不是 NULL
+  if (value_.attr_type() == AttrType::UNDEFINED) {
+    result.set_type(AttrType::INTS);
+    result.set_int(0);
+  } else {
+    result = value_;
+  }
   return RC::SUCCESS;
 }
 

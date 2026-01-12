@@ -212,7 +212,8 @@ RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
     if (right_->type() == ExprType::SUBQUERY) {
       SubQueryExpr *subquery_expr = static_cast<SubQueryExpr *>(right_.get());
       vector<Value> subquery_values;
-      rc = subquery_expr->execute(subquery_values);
+      // 传递外部查询的 tuple，以支持相关子查询
+      rc = subquery_expr->execute(subquery_values, &tuple);
       if (OB_FAIL(rc)) {
         LOG_WARN("failed to execute subquery. rc=%s", strrc(rc));
         return rc;
@@ -289,20 +290,37 @@ RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
     return rc;
   }
 
+  // 如果左表达式返回 NULL，SQL 标准：任何与 NULL 的比较都应该返回 NULL (false)
+  if (left_value.attr_type() == AttrType::UNDEFINED) {
+    value.set_boolean(false);
+    return RC::SUCCESS;
+  }
+
   // 检查右表达式是否为子查询
   if (right_->type() == ExprType::SUBQUERY) {
     SubQueryExpr *subquery_expr = static_cast<SubQueryExpr *>(right_.get());
-    rc = subquery_expr->execute_single(right_value);
+    // 传递外部查询的 tuple，以支持相关子查询
+    rc = subquery_expr->execute_single(right_value, &tuple);
     if (OB_FAIL(rc)) {
       LOG_WARN("failed to execute subquery for single value. rc=%s", strrc(rc));
       return rc;
     }
-    // 如果子查询返回空，right_value 可能是 NULL
+    // 如果子查询返回空，right_value 可能是 NULL (UNDEFINED)
+    // SQL 标准：任何与 NULL 的比较都应该返回 NULL (false)
+    if (right_value.attr_type() == AttrType::UNDEFINED) {
+      value.set_boolean(false);
+      return RC::SUCCESS;
+    }
   } else {
     rc = right_->get_value(tuple, right_value);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to get value of right expression. rc=%s", strrc(rc));
       return rc;
+    }
+    // 如果右表达式返回 NULL，也特殊处理
+    if (right_value.attr_type() == AttrType::UNDEFINED) {
+      value.set_boolean(false);
+      return RC::SUCCESS;
     }
   }
 

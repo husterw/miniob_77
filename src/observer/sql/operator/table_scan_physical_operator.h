@@ -21,6 +21,7 @@ See the Mulan PSL v2 for more details. */
 #include "common/types.h"
 
 class Table;
+class CompositeTuple;
 
 /**
  * @brief 表扫描物理算子
@@ -68,9 +69,14 @@ public:
   int table_id() const { return table_->table_id(); }
 
   void set_predicates(vector<unique_ptr<Expression>> &&exprs);
+  
+  /// @brief 设置外部查询的 tuple（用于相关子查询）
+  void set_outer_tuple(const Tuple *outer_tuple);
 
 private:
   RC filter(RowTuple &tuple, bool &result);
+  /// @brief 更新 composite_tuple_，使其包含外部查询和当前 tuple 的所有字段
+  void update_composite_tuple();
 
 private:
   Table                         *table_ = nullptr;
@@ -80,4 +86,6 @@ private:
   Record                         current_record_;
   RowTuple                       tuple_;
   vector<unique_ptr<Expression>> predicates_;  // TODO chang predicate to table tuple filter
+  const Tuple                    *outer_tuple_ = nullptr;  ///< 外部查询的 tuple（用于相关子查询）
+  unique_ptr<CompositeTuple>     composite_tuple_;  ///< 组合外部查询和当前 tuple 的 CompositeTuple
 };

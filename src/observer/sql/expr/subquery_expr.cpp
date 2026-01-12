@@ -21,7 +21,11 @@ See the Mulan PSL v2 for more details. */
 #include "session/session.h"
 #include "storage/db/db.h"
 #include "sql/expr/tuple.h"
+#include "sql/expr/composite_tuple.h"
 #include "sql/operator/project_physical_operator.h"
+#include "sql/operator/table_scan_physical_operator.h"
+#include "sql/operator/index_scan_physical_operator.h"
+#include <functional>
 #include "sql/operator/logical_operator.h"
 
 using namespace std;
@@ -36,10 +40,19 @@ SubQueryExpr::SubQueryExpr(SelectStmt *select_stmt)
   // 在构造时保存预期的列数和表达式副本，因为表达式可能在逻辑计划创建时被移动
   if (select_stmt && !select_stmt->query_expressions().empty()) {
     // 保存表达式副本，用于后续恢复
+    // 确保保存的表达式数量与 expected_column_count_ 一致
+    size_t expr_count = select_stmt->query_expressions().size();
+    saved_expressions_.reserve(expr_count);
     for (const auto &expr : select_stmt->query_expressions()) {
       if (expr) {
         saved_expressions_.push_back(expr->copy());
       }
+    }
+    // 验证保存的表达式数量
+    if (saved_expressions_.size() != expr_count) {
+      LOG_WARN("saved expression count (%d) does not match SelectStmt expression count (%d). "
+               "Some expressions may be null.", 
+               static_cast<int>(saved_expressions_.size()), static_cast<int>(expr_count));
     }
   }
 }
@@ -53,10 +66,29 @@ SubQueryExpr::SubQueryExpr(unique_ptr<SelectStmt> select_stmt)
   // 在构造时保存预期的列数和表达式副本（在 release() 之前），因为表达式可能在逻辑计划创建时被移动
   if (select_stmt) {
     // 在 release() 之前先保存表达式数量和表达式副本
-    expected_column_count_ = static_cast<int>(select_stmt->query_expressions().size());
-    for (const auto &expr : select_stmt->query_expressions()) {
-      if (expr) {
-        saved_expressions_.push_back(expr->copy());
+    size_t expr_count = select_stmt->query_expressions().size();
+    if (expr_count == 0) {
+      LOG_WARN("SelectStmt has no query_expressions when constructing SubQueryExpr. This may cause issues.");
+      expected_column_count_ = 0;
+    } else {
+      expected_column_count_ = static_cast<int>(expr_count);
+      saved_expressions_.reserve(expr_count);
+      for (const auto &expr : select_stmt->query_expressions()) {
+        if (expr) {
+          saved_expressions_.push_back(expr->copy());
+        }
+      }
+      // 验证保存的表达式数量
+      if (saved_expressions_.empty()) {
+        LOG_WARN("failed to save any expressions (all expressions were null). expected_column_count_=%d", 
+                 expected_column_count_);
+        expected_column_count_ = 0;
+      } else if (saved_expressions_.size() != expr_count) {
+        LOG_WARN("saved expression count (%d) does not match SelectStmt expression count (%d). "
+                 "Some expressions may be null. Using saved count as expected_column_count_.", 
+                 static_cast<int>(saved_expressions_.size()), static_cast<int>(expr_count));
+        // 如果保存的表达式数量不同，使用实际保存的数量
+        expected_column_count_ = static_cast<int>(saved_expressions_.size());
       }
     }
     select_stmt_.reset(select_stmt.release());
@@ -79,10 +111,10 @@ RC SubQueryExpr::get_value(const Tuple &tuple, Value &value) const
   return RC::INTERNAL;
 }
 
-RC SubQueryExpr::execute_single(Value &value) const
+RC SubQueryExpr::execute_single(Value &value, const Tuple *outer_tuple) const
 {
   vector<Value> values;
-  RC rc = execute(values);
+  RC rc = execute(values, outer_tuple);
   if (OB_FAIL(rc)) {
     return rc;
   }
@@ -102,7 +134,7 @@ RC SubQueryExpr::execute_single(Value &value) const
   return RC::SUCCESS;
 }
 
-RC SubQueryExpr::execute(vector<Value> &values) const
+RC SubQueryExpr::execute(vector<Value> &values, const Tuple *outer_tuple) const
 {
   if (!select_stmt_) {
     LOG_WARN("subquery select_stmt is null");
@@ -112,8 +144,9 @@ RC SubQueryExpr::execute(vector<Value> &values) const
   SelectStmt *stmt = select_stmt_.get();
 
   // 使用构造时保存的预期列数（因为表达式可能已经被移动到逻辑计划中）
-  if (expected_column_count_ != 1) {
-    LOG_WARN("subquery should return exactly one column, but got %d", expected_column_count_);
+  // 对于标量子查询，应该只返回一列
+  if (expected_column_count_ <= 0) {
+    LOG_WARN("subquery has invalid expected column count: %d", expected_column_count_);
     return RC::INVALID_ARGUMENT;
   }
 
@@ -151,6 +184,24 @@ RC SubQueryExpr::execute(vector<Value> &values) const
     return RC::INTERNAL;
   }
   
+  // 验证恢复后的表达式数量是否与预期一致
+  int actual_expr_count = static_cast<int>(stmt->query_expressions().size());
+  if (actual_expr_count == 0) {
+    LOG_WARN("SelectStmt has no expressions after restore. expected_column_count_=%d, saved_expressions_.size()=%d",
+             expected_column_count_, static_cast<int>(saved_expressions_.size()));
+    return RC::INTERNAL;
+  }
+  
+  if (actual_expr_count != expected_column_count_ && expected_column_count_ > 0) {
+    LOG_WARN("restored expression count (%d) does not match expected count (%d). This may cause issues.",
+             actual_expr_count, expected_column_count_);
+    // 如果实际表达式数量大于预期，只使用前expected_column_count_个表达式
+    if (actual_expr_count > expected_column_count_) {
+      LOG_TRACE("trimming expressions from %d to %d", actual_expr_count, expected_column_count_);
+      stmt->query_expressions().resize(expected_column_count_);
+    }
+  }
+  
   // 创建新的逻辑计划（每次执行都创建，因为物理计划生成器会移动表达式）
   unique_ptr<LogicalOperator> logical_operator;
   int expr_count_before = static_cast<int>(stmt->query_expressions().size());
@@ -168,6 +219,12 @@ RC SubQueryExpr::execute(vector<Value> &values) const
   int expr_count_after = static_cast<int>(stmt->query_expressions().size());
   LOG_TRACE("logical plan created for subquery. expr_count_before=%d, expr_count_after=%d", 
             expr_count_before, expr_count_after);
+  
+  // 验证逻辑计划是否创建成功
+  if (!logical_operator) {
+    LOG_WARN("logical plan is null after creation");
+    return RC::INTERNAL;
+  }
 
   // 创建物理计划（每次执行都创建新的物理计划）
   unique_ptr<PhysicalOperator> physical_operator;
@@ -176,6 +233,32 @@ RC SubQueryExpr::execute(vector<Value> &values) const
   if (OB_FAIL(rc)) {
     LOG_WARN("failed to create physical plan for subquery. rc=%s", strrc(rc));
     return rc;
+  }
+
+  // 如果有外部查询的 tuple，设置到所有的 TableScanPhysicalOperator 中
+  if (outer_tuple != nullptr) {
+    function<void(PhysicalOperator*)> set_outer_tuple_recursive = 
+      [&outer_tuple, &set_outer_tuple_recursive](PhysicalOperator* op) {
+        if (op == nullptr) return;
+        
+        // 如果是 TableScanPhysicalOperator 或 IndexScanPhysicalOperator，设置外部查询的 tuple
+        if (op->type() == PhysicalOperatorType::TABLE_SCAN) {
+          TableScanPhysicalOperator* table_scan = 
+            static_cast<TableScanPhysicalOperator*>(op);
+          table_scan->set_outer_tuple(outer_tuple);
+        } else if (op->type() == PhysicalOperatorType::INDEX_SCAN) {
+          IndexScanPhysicalOperator* index_scan = 
+            static_cast<IndexScanPhysicalOperator*>(op);
+          index_scan->set_outer_tuple(outer_tuple);
+        }
+        
+        // 递归处理子操作符
+        for (auto& child : op->children()) {
+          set_outer_tuple_recursive(child.get());
+        }
+      };
+    
+    set_outer_tuple_recursive(physical_operator.get());
   }
 
   // 执行查询
@@ -190,7 +273,24 @@ RC SubQueryExpr::execute(vector<Value> &values) const
   // 我们不能从 SelectStmt 中获取表达式。应该从物理算子的 tuple 中直接获取值。
   // 我们已经在构造时保存了 expected_column_count_，应该使用它来验证列数
   // 直接执行查询并收集结果，假设列数为 expected_column_count_（应该是1）
-  while (OB_SUCC(rc = physical_operator->next())) {
+  
+  // 先尝试获取第一个tuple，检查是否有数据
+  rc = physical_operator->next();
+  if (rc == RC::RECORD_EOF) {
+    // 子查询返回空结果集，这是允许的（对于标量子查询会返回NULL）
+    LOG_TRACE("subquery returned empty result set");
+    physical_operator->close();
+    return RC::SUCCESS;
+  }
+  
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to get first tuple from subquery. rc=%s", strrc(rc));
+    physical_operator->close();
+    return rc;
+  }
+  
+  // 收集所有结果
+  do {
     Tuple *tuple = physical_operator->current_tuple();
     if (nullptr == tuple) {
       LOG_WARN("failed to get tuple from subquery");
@@ -200,11 +300,14 @@ RC SubQueryExpr::execute(vector<Value> &values) const
     // 获取第一列的值（子查询只返回一列）
     int tuple_cell_num = tuple->cell_num();
     if (tuple_cell_num == 0) {
-      LOG_WARN("subquery tuple has 0 cells, cannot get value. expected_column_count_=%d", expected_column_count_);
+      LOG_WARN("subquery tuple has 0 cells, cannot get value. expected_column_count_=%d, physical_operator_type=%d", 
+               expected_column_count_, static_cast<int>(physical_operator->type()));
       rc = RC::INVALID_ARGUMENT;
       break;
     }
     
+    // 对于标量子查询，只取第一列的值
+    // 即使实际返回了多列，我们也只取第一列
     Value v;
     rc = tuple->cell_at(0, v);
     if (OB_FAIL(rc)) {
@@ -214,7 +317,15 @@ RC SubQueryExpr::execute(vector<Value> &values) const
     }
 
     values.push_back(v);
-  }
+    
+    // 如果是标量子查询（expected_column_count_ == 1），但实际返回了多列，记录警告但继续
+    if (expected_column_count_ == 1 && tuple_cell_num > 1) {
+      LOG_WARN("subquery returned %d columns but expected 1. Using first column only.", tuple_cell_num);
+    }
+    
+    // 获取下一个tuple
+    rc = physical_operator->next();
+  } while (rc == RC::SUCCESS);
 
   if (rc == RC::RECORD_EOF) {
     rc = RC::SUCCESS;
@@ -247,6 +358,8 @@ AttrType SubQueryExpr::value_type() const
 void SubQueryExpr::restore_expressions() const
 {
   if (!select_stmt_ || saved_expressions_.empty()) {
+    LOG_TRACE("cannot restore expressions: select_stmt_=%p, saved_expressions_.size()=%d", 
+              select_stmt_.get(), static_cast<int>(saved_expressions_.size()));
     return;
   }
   
@@ -254,11 +367,24 @@ void SubQueryExpr::restore_expressions() const
   select_stmt_->query_expressions().clear();
   
   // 从保存的副本中恢复表达式
-  for (const auto &expr : saved_expressions_) {
-    if (expr) {
-      select_stmt_->query_expressions().push_back(expr->copy());
+  // 注意：如果 expected_column_count_ > 0，只恢复 expected_column_count_ 个表达式
+  // 否则，恢复所有保存的表达式
+  size_t restore_count = saved_expressions_.size();
+  if (expected_column_count_ > 0 && static_cast<size_t>(expected_column_count_) < saved_expressions_.size()) {
+    restore_count = static_cast<size_t>(expected_column_count_);
+    LOG_TRACE("restoring only %d expressions (expected_column_count_) out of %d saved expressions",
+              static_cast<int>(restore_count), static_cast<int>(saved_expressions_.size()));
+  }
+  
+  for (size_t i = 0; i < restore_count; ++i) {
+    if (saved_expressions_[i]) {
+      select_stmt_->query_expressions().push_back(saved_expressions_[i]->copy());
+    } else {
+      LOG_WARN("saved_expressions_[%d] is null, skipping", static_cast<int>(i));
     }
   }
   
-  LOG_TRACE("restored %d expressions to SelectStmt", select_stmt_->query_expressions().size());
+  LOG_TRACE("restored %d expressions to SelectStmt (expected: %d, saved: %d)", 
+            static_cast<int>(select_stmt_->query_expressions().size()), expected_column_count_, 
+            static_cast<int>(saved_expressions_.size()));
 }

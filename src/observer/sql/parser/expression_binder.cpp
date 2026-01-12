@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include "common/log/log.h"
 #include "common/lang/string.h"
 #include "common/lang/ranges.h"
+#include "common/lang/unordered_map.h"
 #include "sql/parser/expression_binder.h"
 #include "sql/expr/expression_iterator.h"
 #include "sql/stmt/select_stmt.h"
@@ -542,8 +543,18 @@ RC ExpressionBinder::bind_subquery_expression(
     }
   }
 
+  // 从当前的 BinderContext 中获取外部查询的表信息，以支持相关子查询
+  unordered_map<string, Table *> outer_tables_map;
+  const vector<Table *> &outer_tables = context_.query_tables();
+  for (Table *table : outer_tables) {
+    if (table != nullptr) {
+      outer_tables_map[table->name()] = table;
+    }
+  }
+
   SelectStmt *subquery_stmt = nullptr;
-  RC rc = SelectStmt::create(db, subquery_sql_copy, reinterpret_cast<Stmt *&>(subquery_stmt));
+  RC rc = SelectStmt::create(db, subquery_sql_copy, reinterpret_cast<Stmt *&>(subquery_stmt), 
+                             outer_tables_map.empty() ? nullptr : &outer_tables_map);
   if (OB_FAIL(rc)) {
     LOG_WARN("failed to create subquery SelectStmt. rc=%s", strrc(rc));
     return rc;

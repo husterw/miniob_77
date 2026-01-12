@@ -56,14 +56,16 @@ public:
   /**
    * @brief 执行子查询并获取结果值列表（用于 IN/NOT IN）
    * @param values 输出的值列表
+   * @param outer_tuple 外部查询的当前 tuple（用于相关子查询）
    */
-  RC execute(vector<Value> &values) const;
+  RC execute(vector<Value> &values, const Tuple *outer_tuple = nullptr) const;
 
   /**
    * @brief 执行子查询并获取单个值（用于比较运算）
    * @param value 输出的值
+   * @param outer_tuple 外部查询的当前 tuple（用于相关子查询）
    */
-  RC execute_single(Value &value) const;
+  RC execute_single(Value &value, const Tuple *outer_tuple = nullptr) const;
 
   AttrType value_type() const override;
 

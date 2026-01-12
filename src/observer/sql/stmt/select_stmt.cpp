@@ -33,7 +33,8 @@ SelectStmt::~SelectStmt()
   }
 }
 
-RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
+RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt, 
+                      const unordered_map<string, Table *> *outer_tables)
 {
   if (nullptr == db) {
     LOG_WARN("invalid argument. db is null");
@@ -41,6 +42,13 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
   }
 
   BinderContext binder_context(db);
+
+  // 如果有外部查询的表，先添加到 binder_context 中（用于支持相关子查询）
+  if (outer_tables != nullptr) {
+    for (const auto &pair : *outer_tables) {
+      binder_context.add_table(pair.second);
+    }
+  }
 
   // collect tables in `from` statement
   vector<Table *>                tables;
@@ -61,6 +69,13 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
     binder_context.add_table(table);
     tables.push_back(table);
     table_map.insert({table_name, table});
+  }
+  
+  // 合并外部查询的表到 table_map 中（用于 FilterStmt 查找）
+  if (outer_tables != nullptr) {
+    for (const auto &pair : *outer_tables) {
+      table_map.insert(pair);
+    }
   }
 
   // collect query fields in `select` statement
@@ -222,12 +237,11 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
     // 复制 relations
     subquery_sql_copy.relations = subquery_sql->relations;
     
-    // 复制 conditions（但不包括子查询条件，避免递归问题）
-    // 注意：为了简化，嵌套子查询暂时不支持
+    // 复制 conditions（包括嵌套子查询条件）
+    // 嵌套子查询会在递归调用 SelectStmt::create 时被正确处理
+    // 传递给嵌套子查询的 table_map 包含所有外部查询的表，以支持多层相关子查询
     for (const auto &c : subquery_sql->conditions) {
-      if (!c.right_is_subquery) {
-        subquery_sql_copy.conditions.push_back(c);
-      }
+      subquery_sql_copy.conditions.push_back(c);
     }
     
     // 复制 group_by
@@ -249,7 +263,8 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
     
     LOG_TRACE("creating subquery SelectStmt with %d expressions, %d relations", 
               subquery_sql_copy.expressions.size(), subquery_sql_copy.relations.size());
-    rc = SelectStmt::create(db, subquery_sql_copy, reinterpret_cast<Stmt *&>(subquery_stmt));
+    // 传递外部查询的表信息，以支持相关子查询（correlated subquery）
+    rc = SelectStmt::create(db, subquery_sql_copy, reinterpret_cast<Stmt *&>(subquery_stmt), &table_map);
     if (OB_FAIL(rc)) {
       LOG_WARN("failed to create subquery SelectStmt. rc=%s", strrc(rc));
       if (filter_stmt) delete filter_stmt;

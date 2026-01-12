@@ -1,11 +1,11 @@
 
 %{
- 
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <functional>
- 
+
 #include "common/log/log.h"
 #include "common/lang/string.h"
 #include "common/type/date_type.h"
@@ -13,7 +13,7 @@
 #include "sql/parser/yacc_sql.hpp"
 #include "sql/parser/lex_sql.h"
 #include "sql/expr/expression.h"
- 
+
 using namespace std;
 
 string token_name(const char *sql_string, YYLTYPE *llocp)
