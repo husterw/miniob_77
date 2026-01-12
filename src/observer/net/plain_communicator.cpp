@@ -200,6 +200,19 @@ RC PlainCommunicator::write_result_internal(SessionEvent *event, bool &need_disc
   const TupleSchema &schema   = sql_result->tuple_schema();
   const int          cell_num = schema.cell_num();
 
+  // 先尝试获取第一行数据，以便在发送列定义之前就能检测到错误（如子查询错误）
+  // 这样可以避免发送列定义后才发现错误，导致客户端看到列定义和错误混杂在一起
+  Tuple *first_tuple = nullptr;
+  RC first_rc = sql_result->next_tuple(first_tuple);
+  
+  // 如果第一次获取就出错（且不是EOF），说明查询执行有错误，应该直接返回错误，不发送列定义
+  if (first_rc != RC::SUCCESS && first_rc != RC::RECORD_EOF) {
+    sql_result->set_return_code(first_rc);
+    sql_result->close();
+    return write_state(event, need_disconnect);
+  }
+  
+  // 如果没有错误，再发送列定义
   for (int i = 0; i < cell_num; i++) {
     const TupleCellSpec &spec  = schema.cell_at(i);
     const char          *alias = spec.alias();
@@ -236,16 +249,65 @@ RC PlainCommunicator::write_result_internal(SessionEvent *event, bool &need_disc
     }
   }
 
-  rc = RC::SUCCESS;
-  if (event->session()->get_execution_mode() == ExecutionMode::CHUNK_ITERATOR
-      && event->session()->used_chunk_mode()) {
-    rc = write_chunk_result(sql_result);
-  } else {
-    rc = write_tuple_result(sql_result);
+  // 如果已经获取了第一行，先输出第一行
+  if (first_rc == RC::SUCCESS && first_tuple != nullptr) {
+    int first_cell_num = first_tuple->cell_num();
+    for (int i = 0; i < first_cell_num; i++) {
+      if (i != 0) {
+        const char *delim = " | ";
+        rc = writer_->writen(delim, strlen(delim));
+        if (OB_FAIL(rc)) {
+          LOG_WARN("failed to send data to client. err=%s", strerror(errno));
+          sql_result->close();
+          return rc;
+        }
+      }
+      
+      Value value;
+      rc = first_tuple->cell_at(i, value);
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to get tuple cell value. rc=%s", strrc(rc));
+        sql_result->close();
+        return rc;
+      }
+      
+      string cell_str = value.to_string();
+      rc = writer_->writen(cell_str.data(), cell_str.size());
+      if (OB_FAIL(rc)) {
+        LOG_WARN("failed to send data to client. err=%s", strerror(errno));
+        sql_result->close();
+        return rc;
+      }
+    }
+    
+    char newline = '\n';
+    rc = writer_->writen(&newline, 1);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to send data to client. err=%s", strerror(errno));
+      sql_result->close();
+      return rc;
+    }
   }
 
-  if (OB_FAIL(rc)) {
-    return rc;
+  // 然后继续获取剩余的数据行（如果第一行不是EOF）
+  rc = RC::SUCCESS;
+  if (first_rc != RC::RECORD_EOF) {
+    if (event->session()->get_execution_mode() == ExecutionMode::CHUNK_ITERATOR
+        && event->session()->used_chunk_mode()) {
+      rc = write_chunk_result(sql_result);
+    } else {
+      rc = write_tuple_result(sql_result);
+    }
+  } else {
+    // 如果第一次获取就是EOF，说明结果集为空，不需要继续获取
+    rc = RC::SUCCESS;
+  }
+
+  // 如果获取结果行时发生错误（如子查询错误），应该设置错误码并发送错误信息
+  if (rc != RC::SUCCESS && rc != RC::RECORD_EOF) {
+    sql_result->set_return_code(rc);
+    sql_result->close();
+    return write_state(event, need_disconnect);
   }
 
   if (cell_num == 0) {

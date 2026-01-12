@@ -241,9 +241,14 @@ RC TableScanPhysicalOperator::filter(RowTuple &tuple, bool &result)
   for (unique_ptr<Expression> &expr : predicates_) {
     rc = expr->get_value(*tuple_to_use, value);
     if (rc != RC::SUCCESS) {
-      // 如果表达式评估返回错误（比如 NOTFOUND），将这一行视为不满足条件（返回 false）
-      // 而不是让整个查询失败
-      // 这样可以处理子查询返回错误的情况
+      // 对于某些错误（如 NOTFOUND），将这一行视为不满足条件（返回 false）
+      // 但对于严重错误（如 INVALID_ARGUMENT - 标量子查询返回多行），应该向上传播错误
+      // INVALID_ARGUMENT 通常表示子查询返回多行或返回了错误的列数，这是不能容忍的错误
+      if (rc == RC::INVALID_ARGUMENT) {
+        LOG_WARN("expression evaluation failed with INVALID_ARGUMENT in filter, propagating error. rc=%s", strrc(rc));
+        return rc;  // 向上传播错误
+      }
+      // 其他错误（如 NOTFOUND）可以过滤掉行
       LOG_TRACE("expression evaluation failed in filter, treating row as filtered out. rc=%s", strrc(rc));
       result = false;
       return RC::SUCCESS;

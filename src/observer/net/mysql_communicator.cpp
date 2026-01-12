@@ -778,6 +778,13 @@ RC MysqlCommunicator::write_result(SessionEvent *event, bool &need_disconnect)
     }
 
     rc = send_result_rows(event, sql_result, cell_num == 0, need_disconnect);
+    // 如果发送结果行时发生错误（如子查询错误），不应该继续发送EOF包
+    // 应该设置错误码并发送错误包
+    if (rc != RC::SUCCESS && rc != RC::RECORD_EOF) {
+      sql_result->set_return_code(rc);
+      sql_result->close();
+      return write_state(event, need_disconnect);
+    }
   }
 
   RC close_rc = sql_result->close();
@@ -950,6 +957,13 @@ RC MysqlCommunicator::send_result_rows(SessionEvent *event, SqlResult *sql_resul
     rc = write_chunk_result(sql_result, packet, affected_rows, need_disconnect);
   } else {
     rc = write_tuple_result(sql_result, packet, affected_rows, need_disconnect);
+  }
+
+  // 如果获取结果时发生错误（如子查询错误），不应该发送EOF/OK包
+  // 应该直接返回错误，让上层发送错误包
+  if (rc != RC::SUCCESS && rc != RC::RECORD_EOF) {
+    LOG_WARN("failed to get result rows. rc=%s", strrc(rc));
+    return rc;
   }
 
   // 所有行发送完成后，发送一个EOF或OK包

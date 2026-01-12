@@ -289,6 +289,31 @@ RC SubQueryExpr::execute(vector<Value> &values, const Tuple *outer_tuple) const
     return rc;
   }
   
+  // 获取第一个tuple并验证列数
+  Tuple *first_tuple = physical_operator->current_tuple();
+  if (nullptr == first_tuple) {
+    LOG_WARN("failed to get first tuple from subquery");
+    physical_operator->close();
+    return RC::INVALID_ARGUMENT;
+  }
+  
+  int tuple_cell_num = first_tuple->cell_num();
+  if (tuple_cell_num == 0) {
+    LOG_WARN("subquery tuple has 0 cells, cannot get value. expected_column_count_=%d, physical_operator_type=%d", 
+             expected_column_count_, static_cast<int>(physical_operator->type()));
+    physical_operator->close();
+    return RC::INVALID_ARGUMENT;
+  }
+  
+  // 验证列数：对于等值比较和IN/NOT IN操作，子查询必须只返回1列
+  // 即使expected_column_count_可能大于1（如select *返回多列），但在这些上下文中必须只有1列
+  if (tuple_cell_num != 1) {
+    LOG_WARN("subquery should return exactly one column for comparison or IN/NOT IN operation, but got %d columns", 
+             tuple_cell_num);
+    physical_operator->close();
+    return RC::INVALID_ARGUMENT;
+  }
+  
   // 收集所有结果
   do {
     Tuple *tuple = physical_operator->current_tuple();
@@ -297,31 +322,24 @@ RC SubQueryExpr::execute(vector<Value> &values, const Tuple *outer_tuple) const
       break;
     }
 
-    // 获取第一列的值（子查询只返回一列）
-    int tuple_cell_num = tuple->cell_num();
-    if (tuple_cell_num == 0) {
-      LOG_WARN("subquery tuple has 0 cells, cannot get value. expected_column_count_=%d, physical_operator_type=%d", 
-               expected_column_count_, static_cast<int>(physical_operator->type()));
+    // 验证每一行的列数都必须是1（与第一行一致）
+    int current_cell_num = tuple->cell_num();
+    if (current_cell_num != 1) {
+      LOG_WARN("subquery tuple has %d cells, but must have exactly 1 column", current_cell_num);
       rc = RC::INVALID_ARGUMENT;
       break;
     }
     
-    // 对于标量子查询，只取第一列的值
-    // 即使实际返回了多列，我们也只取第一列
+    // 获取第一列的值（子查询只返回一列）
     Value v;
     rc = tuple->cell_at(0, v);
     if (OB_FAIL(rc)) {
-      LOG_WARN("failed to get value from subquery tuple. cell_num=%d, expected_column_count_=%d, rc=%s", 
-               tuple_cell_num, expected_column_count_, strrc(rc));
+      LOG_WARN("failed to get value from subquery tuple. cell_num=%d, rc=%s", 
+               current_cell_num, strrc(rc));
       break;
     }
 
     values.push_back(v);
-    
-    // 如果是标量子查询（expected_column_count_ == 1），但实际返回了多列，记录警告但继续
-    if (expected_column_count_ == 1 && tuple_cell_num > 1) {
-      LOG_WARN("subquery returned %d columns but expected 1. Using first column only.", tuple_cell_num);
-    }
     
     // 获取下一个tuple
     rc = physical_operator->next();
