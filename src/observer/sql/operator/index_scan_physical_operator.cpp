@@ -271,7 +271,12 @@ RC IndexScanPhysicalOperator::filter(RowTuple &tuple, bool &result)
   for (unique_ptr<Expression> &expr : predicates_) {
     rc = expr->get_value(*tuple_to_use, value);
     if (rc != RC::SUCCESS) {
-      return rc;
+      // 如果表达式评估返回错误（比如 NOTFOUND），将这一行视为不满足条件（返回 false）
+      // 而不是让整个查询失败
+      // 这样可以处理子查询返回错误的情况
+      LOG_TRACE("expression evaluation failed in filter, treating row as filtered out. rc=%s", strrc(rc));
+      result = false;
+      return RC::SUCCESS;
     }
 
     bool tmp_result = value.get_boolean();

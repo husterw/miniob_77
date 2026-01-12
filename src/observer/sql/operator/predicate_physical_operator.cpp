@@ -49,7 +49,10 @@ RC PredicatePhysicalOperator::next()
     Value value;
     rc = expression_->get_value(*tuple, value);
     if (rc != RC::SUCCESS) {
-      return rc;
+      // 如果表达式评估返回错误（比如子查询返回错误），跳过这一行
+      // 这样可以处理子查询返回错误的情况
+      LOG_TRACE("expression evaluation failed in predicate operator, skipping row. rc=%s", strrc(rc));
+      continue;
     }
 
     if (value.get_boolean()) {

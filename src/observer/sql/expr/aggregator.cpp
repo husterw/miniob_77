@@ -17,6 +17,11 @@ See the Mulan PSL v2 for more details. */
 
 RC SumAggregator::accumulate(const Value& value)
 {
+  // 根据 SQL 标准，SUM 应该忽略 NULL 值
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
+  }
+  
   if (value_.attr_type() == AttrType::UNDEFINED) {
     value_ = value;
     return RC::SUCCESS;
@@ -37,6 +42,11 @@ RC SumAggregator::evaluate(Value& result)
 
 RC AvgAggregator::accumulate(const Value& value)
 {
+  // 根据 SQL 标准，AVG 应该忽略 NULL 值
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
+  }
+  
   if (value_.attr_type() == AttrType::UNDEFINED) {
     value_ = value;
     count_ = 1;
@@ -53,6 +63,12 @@ RC AvgAggregator::accumulate(const Value& value)
 
 RC AvgAggregator::evaluate(Value& result)
 {
+  // 如果没有累积任何值（空输入），AVG 应该返回 NULL（UNDEFINED）
+  if (value_.attr_type() == AttrType::UNDEFINED || count_ == 0) {
+    result.set_type(AttrType::UNDEFINED);
+    return RC::SUCCESS;
+  }
+  
   if (value_.attr_type() == AttrType::INTS) {
     float avg = static_cast<float>(value_.get_int()) / count_;
     result.set_type(AttrType::FLOATS);
@@ -62,6 +78,10 @@ RC AvgAggregator::evaluate(Value& result)
     float avg = value_.get_float() / count_;
     result.set_type(AttrType::FLOATS);
     result.set_float(avg);
+  }
+  else {
+    // 如果类型不是 INTS 或 FLOATS，返回 UNDEFINED
+    result.set_type(AttrType::UNDEFINED);
   }
 
   return RC::SUCCESS;
@@ -93,6 +113,11 @@ RC CountAggregator::evaluate(Value& result)
 
 RC MaxAggregator::accumulate(const Value& value)
 {
+  // 根据 SQL 标准，MAX 应该忽略 NULL 值
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
+  }
+  
   if (value_.attr_type() == AttrType::UNDEFINED) {
     value_ = value;
     return RC::SUCCESS;
@@ -115,6 +140,11 @@ RC MaxAggregator::evaluate(Value& result)
 
 RC MinAggregator::accumulate(const Value& value)
 {
+  // 根据 SQL 标准，MIN 应该忽略 NULL 值
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
+  }
+  
   if (value_.attr_type() == AttrType::UNDEFINED) {
     value_ = value;
     return RC::SUCCESS;

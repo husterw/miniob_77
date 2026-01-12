@@ -931,6 +931,56 @@ condition:
       delete $1;
       // 不删除 $4，因为 right_subquery_node 需要保持有效
     }
+    | LBRACE select_stmt RBRACE comp_op rel_attr
+    {
+      // 支持左边是子查询的条件，如 (select avg(...)) = col1
+      // 为了保持兼容性，将其转换为 col1 = (select ...) 的形式（交换操作数和操作符）
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$5;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$2->selection;
+      $$->right_subquery_node = $2;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      // 反转比较操作符（如果需要）
+      CompOp comp = $4;
+      switch (comp) {
+        case LESS_THAN: comp = GREAT_THAN; break;
+        case GREAT_THAN: comp = LESS_THAN; break;
+        case LESS_EQUAL: comp = GREAT_EQUAL; break;
+        case GREAT_EQUAL: comp = LESS_EQUAL; break;
+        // EQUAL_TO, NOT_EQUAL 不需要反转
+        default: break;
+      }
+      $$->comp = comp;
+      delete $5;
+      // 不删除 $2，因为 right_subquery_node 需要保持有效
+    }
+    | LBRACE select_stmt RBRACE comp_op value
+    {
+      // 支持左边是子查询的条件，如 (select avg(...)) = 5
+      // 为了保持兼容性，将其转换为 5 = (select ...) 的形式（交换操作数和操作符）
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 0;
+      $$->left_value = *$5;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$2->selection;
+      $$->right_subquery_node = $2;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      // 反转比较操作符（如果需要）
+      CompOp comp = $4;
+      switch (comp) {
+        case LESS_THAN: comp = GREAT_THAN; break;
+        case GREAT_THAN: comp = LESS_THAN; break;
+        case LESS_EQUAL: comp = GREAT_EQUAL; break;
+        case GREAT_EQUAL: comp = LESS_EQUAL; break;
+        // EQUAL_TO, NOT_EQUAL 不需要反转
+        default: break;
+      }
+      $$->comp = comp;
+      delete $5;
+      // 不删除 $2，因为 right_subquery_node 需要保持有效
+    }
     ;
 
 comp_op:
