@@ -106,6 +106,8 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         HELP
         EXIT
         DOT //QUOTE
+        IS
+        NULL_T
         IN
         INTO
         VALUES
@@ -155,6 +157,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
   char *                                     cstring;
   int                                        number;
   float                                      floats;
+  bool                                       bool_value;
 }
 
 %destructor { delete $$; } <condition>
@@ -206,6 +209,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 %type <order_by_item>       order_by_item
 %type <cstring>             fields_terminated_by
 %type <cstring>             enclosed_by
+%type <bool_value>          nullable_option
 %type <sql_node>            calc_stmt
 %type <sql_node>            select_stmt
 %type <sql_node>            insert_stmt
@@ -384,19 +388,36 @@ attr_def_list:
     ;
     
 attr_def:
-    ID type LBRACE number RBRACE 
+    ID type LBRACE number RBRACE nullable_option
     {
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
       $$->length = ($$->type == AttrType::TEXTS) ? 4096 : $4;
+      $$->nullable = $6;
     }
-    | ID type
+    | ID type nullable_option
     {
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
       $$->length = ($$->type == AttrType::TEXTS) ? 4096 : 4;
+      $$->nullable = $3;
+    }
+    ;
+
+nullable_option:
+    /* empty */
+    {
+      $$ = false;  // 默认不允许NULL
+    }
+    | NULL_T
+    {
+      $$ = true;  // 允许NULL
+    }
+    | NOT NULL_T
+    {
+      $$ = false;  // 不允许NULL
     }
     ;
 number:
@@ -482,6 +503,11 @@ value:
     }
     |FLOAT {
       $$ = new Value((float)$1);
+      @$ = @1;
+    }
+    |NULL_T {
+      $$ = new Value();
+      $$->set_type(AttrType::UNDEFINED);
       @$ = @1;
     }
     |SSS {
@@ -980,6 +1006,75 @@ condition:
       $$->comp = comp;
       delete $5;
       // 不删除 $2，因为 right_subquery_node 需要保持有效
+    }
+    | rel_attr IS NULL_T
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_value.set_type(AttrType::UNDEFINED);
+      $$->right_is_subquery = 0;
+      $$->comp = IS_NULL_OP;
+      delete $1;
+    }
+    | rel_attr IS NOT NULL_T
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_value.set_type(AttrType::UNDEFINED);
+      $$->right_is_subquery = 0;
+      $$->comp = IS_NOT_NULL_OP;
+      delete $1;
+    }
+    | expression IS NULL_T
+    {
+      // expression IS NULL应该在表达式系统中处理
+      // 如果expression是ValueExpr（字面量值），我们可以提取它的值
+      $$ = new ConditionSqlNode;
+      $$->right_is_attr = 0;
+      $$->right_value.set_type(AttrType::UNDEFINED);
+      $$->right_is_subquery = 0;
+      $$->comp = IS_NULL_OP;
+      
+      // 检查表达式是否是ValueExpr（字面量值）
+      if ($1->type() == ExprType::VALUE) {
+        ValueExpr *value_expr = static_cast<ValueExpr*>($1);
+        $$->left_is_attr = 0;
+        $$->left_value = value_expr->get_value();  // 提取字面量的值
+        delete $1;  // 清理表达式
+      } else {
+        // 对于非字面量表达式，无法在condition系统中直接处理
+        // 这将在表达式构建器中处理，但这里我们需要标记
+        $$->left_is_attr = 0;
+        $$->left_value.set_type(AttrType::UNDEFINED);  // 标记为需要表达式系统处理
+        delete $1;  // 清理表达式，因为condition系统无法保存它
+        // 注意：这种情况应该在表达式构建器中正确处理
+      }
+    }
+    | expression IS NOT NULL_T
+    {
+      // expression IS NOT NULL应该在表达式系统中处理
+      $$ = new ConditionSqlNode;
+      $$->right_is_attr = 0;
+      $$->right_value.set_type(AttrType::UNDEFINED);
+      $$->right_is_subquery = 0;
+      $$->comp = IS_NOT_NULL_OP;
+      
+      // 检查表达式是否是ValueExpr（字面量值）
+      if ($1->type() == ExprType::VALUE) {
+        ValueExpr *value_expr = static_cast<ValueExpr*>($1);
+        $$->left_is_attr = 0;
+        $$->left_value = value_expr->get_value();  // 提取字面量的值
+        delete $1;  // 清理表达式
+      } else {
+        // 对于非字面量表达式，无法在condition系统中直接处理
+        $$->left_is_attr = 0;
+        $$->left_value.set_type(AttrType::UNDEFINED);  // 标记为需要表达式系统处理
+        delete $1;  // 清理表达式
+      }
     }
     ;
 

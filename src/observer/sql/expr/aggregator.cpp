@@ -89,10 +89,17 @@ RC AvgAggregator::evaluate(Value& result)
 
 RC CountAggregator::accumulate(const Value& value)
 {
-  if (value.attr_type() == AttrType::UNDEFINED) {
+  // COUNT(*) 的情况，value 总是 Value(1)，不会是 UNDEFINED
+  // COUNT(column) 的情况，如果 value 是 UNDEFINED (NULL)，应该忽略
+  // 由于 COUNT(*) 的 child 是 Value(1)，它永远不会是 UNDEFINED，所以这样处理是正确的
+  if (value_.attr_type() == AttrType::UNDEFINED) {
     value_.set_type(AttrType::INTS);
-    value_.set_int(1);
-    return RC::SUCCESS;
+    value_.set_int(0);
+  }
+  
+  // 对于 COUNT(column)，如果值是 NULL，跳过计数
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
   }
 
   value_.set_int(value_.get_int() + 1);

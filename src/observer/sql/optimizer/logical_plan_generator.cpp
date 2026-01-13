@@ -237,7 +237,12 @@ RC LogicalPlanGenerator::create_plan(FilterStmt *filter_stmt, unique_ptr<Logical
                                      ? static_cast<Expression *>(new FieldExpr(filter_obj_right.field))
                                      : static_cast<Expression *>(new ValueExpr(filter_obj_right.value)));
 
-    if (left->value_type() != right->value_type()) {
+    // 如果涉及NULL值（UNDEFINED类型），跳过类型转换
+    // 因为根据SQL标准，任何与NULL的比较都返回FALSE（除了IS NULL和IS NOT NULL）
+    // 这些操作在ComparisonExpr::get_value中已经特殊处理了
+    bool has_null = (left->value_type() == AttrType::UNDEFINED || right->value_type() == AttrType::UNDEFINED);
+    
+    if (!has_null && left->value_type() != right->value_type()) {
       auto left_to_right_cost = implicit_cast_cost(left->value_type(), right->value_type());
       auto right_to_left_cost = implicit_cast_cost(right->value_type(), left->value_type());
       if (left_to_right_cost <= right_to_left_cost && left_to_right_cost != INT32_MAX) {

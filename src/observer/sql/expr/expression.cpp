@@ -146,6 +146,13 @@ RC ComparisonExpr::compare_value(const Value& left, const Value& right, bool& re
 {
   RC  rc = RC::SUCCESS;
   int cmp_result = left.compare(right);
+  
+  // 如果比较结果是 INT32_MAX，表示涉及NULL值，根据SQL标准，任何与NULL的比较都返回FALSE
+  if (cmp_result == INT32_MAX) {
+    result = false;
+    return rc;
+  }
+  
   result = false;
   switch (comp_) {
   case EQUAL_TO: {
@@ -177,6 +184,26 @@ RC ComparisonExpr::compare_value(const Value& left, const Value& right, bool& re
 
 RC ComparisonExpr::try_get_value(Value& cell) const
 {
+  // 处理 IS NULL 和 IS NOT NULL
+  if (comp_ == IS_NULL_OP || comp_ == IS_NOT_NULL_OP) {
+    // 对于 IS NULL/IS NOT NULL，只需要检查左边表达式的值
+    // 右边表达式不需要（IS NULL 的右边是 NULL 字面量）
+    if (left_->type() == ExprType::VALUE) {
+      ValueExpr* left_value_expr = static_cast<ValueExpr*>(left_.get());
+      const Value& left_cell = left_value_expr->get_value();
+      
+      bool is_null = (left_cell.attr_type() == AttrType::UNDEFINED);
+      if (comp_ == IS_NULL_OP) {
+        cell.set_boolean(is_null);
+      } else {  // IS_NOT_NULL_OP
+        cell.set_boolean(!is_null);
+      }
+      return RC::SUCCESS;
+    }
+    // 如果左边不是字面量值，无法在编译时确定结果
+    return RC::INVALID_ARGUMENT;
+  }
+  
   if (left_->type() == ExprType::VALUE && right_->type() == ExprType::VALUE) {
     ValueExpr* left_value_expr = static_cast<ValueExpr*>(left_.get());
     ValueExpr* right_value_expr = static_cast<ValueExpr*>(right_.get());
@@ -199,6 +226,24 @@ RC ComparisonExpr::try_get_value(Value& cell) const
 
 RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
 {
+  // 处理 IS NULL 和 IS NOT NULL
+  if (comp_ == IS_NULL_OP || comp_ == IS_NOT_NULL_OP) {
+    Value left_value;
+    RC rc = left_->get_value(tuple, left_value);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to get value of left expression. rc=%s", strrc(rc));
+      return rc;
+    }
+    
+    bool is_null = (left_value.attr_type() == AttrType::UNDEFINED);
+    if (comp_ == IS_NULL_OP) {
+      value.set_boolean(is_null);
+    } else {  // IS_NOT_NULL_OP
+      value.set_boolean(!is_null);
+    }
+    return RC::SUCCESS;
+  }
+  
   // 处理 IN/NOT IN 操作
   if (comp_ == IN_OP || comp_ == NOT_IN_OP) {
     Value left_value;

@@ -196,6 +196,36 @@ public:
     FieldExpr       *field_expr = speces_[index];
     const FieldMeta *field_meta = field_expr->field().meta();
     cell.reset();
+    
+    // 检查字段是否为NULL（NULL值在记录中被存储为全0）
+    // 对于日期类型，即使元数据中没有nullable字段（旧表兼容），也应该检测全0值作为NULL
+    // 因为日期0（1970-01-01）通常不是有效值，更可能是NULL
+    // 对于其他类型（如整数），只有在字段明确标记为nullable时才检测NULL，避免将有效的0值误判
+    bool should_check_null = field_meta->nullable() || (field_meta->type() == AttrType::DATES);
+    
+    if (should_check_null) {
+      const char *field_data = this->record_->data() + field_meta->offset();
+      int field_len = field_meta->len();
+      
+      // 检查字段数据是否全为0
+      bool is_all_zero = true;
+      for (int i = 0; i < field_len; i++) {
+        if (field_data[i] != 0) {
+          is_all_zero = false;
+          break;
+        }
+      }
+      
+      // 如果全为0，则认为是NULL
+      // 注意：对于整数类型且字段未标记为nullable，如果值为0，可能会被误判为NULL
+      // 但在当前实现中，NULL值确实是通过memset初始化为0存储的，没有NULL bitmap
+      // 这是当前实现的限制，如果需要区分整数0和NULL，需要实现NULL bitmap
+      if (is_all_zero) {
+        cell.set_type(AttrType::UNDEFINED);
+        return RC::SUCCESS;
+      }
+    }
+    
     cell.set_type(field_meta->type());
     cell.set_data(this->record_->data() + field_meta->offset(), field_meta->len());
     return RC::SUCCESS;

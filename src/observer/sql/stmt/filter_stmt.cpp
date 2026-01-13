@@ -84,7 +84,8 @@ RC FilterStmt::create_filter_unit(Db *db, Table *default_table, unordered_map<st
   RC rc = RC::SUCCESS;
 
   CompOp comp = condition.comp;
-  if (comp < EQUAL_TO || comp >= NO_OP) {
+  // IS_NULL_OP 和 IS_NOT_NULL_OP 是有效的操作符
+  if ((comp < EQUAL_TO || comp >= NO_OP) && comp != IS_NULL_OP && comp != IS_NOT_NULL_OP) {
     LOG_WARN("invalid compare operator : %d", comp);
     return RC::INVALID_ARGUMENT;
   }
