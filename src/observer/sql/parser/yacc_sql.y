@@ -108,6 +108,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         DOT //QUOTE
         IS
         NULL_T
+        NULLABLE
         IN
         INTO
         VALUES
@@ -413,7 +414,11 @@ nullable_option:
     }
     | NULL_T
     {
-      $$ = true;  // 允许NULL
+      $$ = true;  // 允许NULL (使用 NULL 关键字)
+    }
+    | NULLABLE
+    {
+      $$ = true;  // 允许NULL (使用 nullable 关键字)
     }
     | NOT NULL_T
     {

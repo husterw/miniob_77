@@ -104,6 +104,7 @@ AND                                     RETURN_TOKEN(AND);
 NOT                                     RETURN_TOKEN(NOT);
 IS                                      RETURN_TOKEN(IS);
 NULL                                    RETURN_TOKEN(NULL_T);
+NULLABLE                                RETURN_TOKEN(NULLABLE);
 IN                                      RETURN_TOKEN(IN);
 INSERT                                  RETURN_TOKEN(INSERT);
 INTO                                    RETURN_TOKEN(INTO);
