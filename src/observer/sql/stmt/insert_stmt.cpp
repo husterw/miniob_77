@@ -41,12 +41,29 @@ RC InsertStmt::create(Db *db, const InsertSqlNode &inserts, Stmt *&stmt)
   const TableMeta &table_meta = table->table_meta();
   const int        field_num  = table_meta.field_num() - table_meta.sys_field_num();
   const size_t row_count = inserts.values.size();
+  const int sys_field_num = table_meta.sys_field_num();
+  
   for (size_t i = 0; i < row_count; ++i) {
     const auto& row = inserts.values[i];
     const int value_num = static_cast<int>(row.size());
     if (field_num != value_num) {
       LOG_WARN("schema mismatch. value num=%d, field num in schema=%d", value_num, field_num);
       return RC::SCHEMA_FIELD_MISSING;
+    }
+    
+    // 检查NOT NULL约束
+    for (int j = 0; j < value_num; ++j) {
+      const FieldMeta *field = table_meta.field(j + sys_field_num);
+      if (field == nullptr) {
+        LOG_WARN("field not found at index %d", j + sys_field_num);
+        return RC::SCHEMA_FIELD_MISSING;
+      }
+      
+      // 如果字段不允许NULL，但插入的值是NULL，则返回错误
+      if (!field->nullable() && row[j].attr_type() == AttrType::UNDEFINED) {
+        LOG_WARN("field %s does not allow NULL value", field->name());
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
     }
   }
 

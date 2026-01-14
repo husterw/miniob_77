@@ -83,9 +83,21 @@ RC ScalarGroupByPhysicalOperator::open(Trx *trx)
   }
 
   // 得到最终聚合后的值
-  if (group_value_) {
-    rc = evaluate(*group_value_);
+  // 如果没有输入行（group_value_ == nullptr），也需要创建 group_value_ 并评估
+  // 这样聚合函数会返回 NULL（UNDEFINED），符合 SQL 标准
+  if (group_value_ == nullptr) {
+    // 创建空的聚合器列表
+    AggregatorList aggregator_list;
+    create_aggregator_list(aggregator_list);
+    
+    // 创建一个空的 CompositeTuple（不需要任何输入 tuple）
+    CompositeTuple composite_tuple;
+    
+    group_value_ = make_unique<GroupValueType>(std::move(aggregator_list), std::move(composite_tuple));
   }
+  
+  // 评估聚合值（即使没有输入行，聚合函数也会返回 NULL）
+  rc = evaluate(*group_value_);
 
   emitted_ = false;
   return rc;

@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/expression.h"
 #include "sql/expr/tuple.h"
 #include "sql/expr/arithmetic_operator.hpp"
+#include "sql/expr/subquery_expr.h"
 
 using namespace std;
 
@@ -145,6 +146,13 @@ RC ComparisonExpr::compare_value(const Value& left, const Value& right, bool& re
 {
   RC  rc = RC::SUCCESS;
   int cmp_result = left.compare(right);
+  
+  // 如果比较结果是 INT32_MAX，表示涉及NULL值，根据SQL标准，任何与NULL的比较都返回FALSE
+  if (cmp_result == INT32_MAX) {
+    result = false;
+    return rc;
+  }
+  
   result = false;
   switch (comp_) {
   case EQUAL_TO: {
@@ -176,6 +184,26 @@ RC ComparisonExpr::compare_value(const Value& left, const Value& right, bool& re
 
 RC ComparisonExpr::try_get_value(Value& cell) const
 {
+  // 处理 IS NULL 和 IS NOT NULL
+  if (comp_ == IS_NULL_OP || comp_ == IS_NOT_NULL_OP) {
+    // 对于 IS NULL/IS NOT NULL，只需要检查左边表达式的值
+    // 右边表达式不需要（IS NULL 的右边是 NULL 字面量）
+    if (left_->type() == ExprType::VALUE) {
+      ValueExpr* left_value_expr = static_cast<ValueExpr*>(left_.get());
+      const Value& left_cell = left_value_expr->get_value();
+      
+      bool is_null = (left_cell.attr_type() == AttrType::UNDEFINED);
+      if (comp_ == IS_NULL_OP) {
+        cell.set_boolean(is_null);
+      } else {  // IS_NOT_NULL_OP
+        cell.set_boolean(!is_null);
+      }
+      return RC::SUCCESS;
+    }
+    // 如果左边不是字面量值，无法在编译时确定结果
+    return RC::INVALID_ARGUMENT;
+  }
+  
   if (left_->type() == ExprType::VALUE && right_->type() == ExprType::VALUE) {
     ValueExpr* left_value_expr = static_cast<ValueExpr*>(left_.get());
     ValueExpr* right_value_expr = static_cast<ValueExpr*>(right_.get());
@@ -198,6 +226,106 @@ RC ComparisonExpr::try_get_value(Value& cell) const
 
 RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
 {
+  // 处理 IS NULL 和 IS NOT NULL
+  if (comp_ == IS_NULL_OP || comp_ == IS_NOT_NULL_OP) {
+    Value left_value;
+    RC rc = left_->get_value(tuple, left_value);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to get value of left expression. rc=%s", strrc(rc));
+      return rc;
+    }
+    
+    bool is_null = (left_value.attr_type() == AttrType::UNDEFINED);
+    if (comp_ == IS_NULL_OP) {
+      value.set_boolean(is_null);
+    } else {  // IS_NOT_NULL_OP
+      value.set_boolean(!is_null);
+    }
+    return RC::SUCCESS;
+  }
+  
+  // 处理 IN/NOT IN 操作
+  if (comp_ == IN_OP || comp_ == NOT_IN_OP) {
+    Value left_value;
+    RC rc = left_->get_value(tuple, left_value);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to get value of left expression. rc=%s", strrc(rc));
+      return rc;
+    }
+
+    // 检查右表达式是否为子查询
+    if (right_->type() == ExprType::SUBQUERY) {
+      SubQueryExpr *subquery_expr = static_cast<SubQueryExpr *>(right_.get());
+      vector<Value> subquery_values;
+      // 传递外部查询的 tuple，以支持相关子查询
+      rc = subquery_expr->execute(subquery_values, &tuple);
+      if (OB_FAIL(rc)) {
+        LOG_WARN("failed to execute subquery. rc=%s", strrc(rc));
+        return rc;
+      }
+
+      // 检查 left_value 是否在 subquery_values 中
+      bool found = false;
+      bool has_null = false;
+      for (const Value &v : subquery_values) {
+        if (v.attr_type() == AttrType::UNDEFINED) {
+          has_null = true;
+          continue;
+        }
+        // 尝试比较，如果类型不兼容，尝试类型转换
+        int cmp_result = left_value.compare(v);
+        if (cmp_result == INT32_MAX) {
+          // 类型不兼容，尝试类型转换后比较
+          // 先尝试将 v 转换为 left_value 的类型
+          Value converted_v;
+          RC cast_rc = Value::cast_to(v, left_value.attr_type(), converted_v);
+          if (cast_rc == RC::SUCCESS) {
+            cmp_result = left_value.compare(converted_v);
+          }
+          // 如果第一次转换失败或仍然不兼容，尝试将 left_value 转换为 v 的类型
+          if (cmp_result == INT32_MAX) {
+            Value converted_left;
+            cast_rc = Value::cast_to(left_value, v.attr_type(), converted_left);
+            if (cast_rc == RC::SUCCESS) {
+              cmp_result = converted_left.compare(v);
+            }
+          }
+          // 如果类型转换和比较都失败，跳过这个值
+          if (cmp_result == INT32_MAX) {
+            LOG_WARN("cannot compare values: left_type=%d, right_type=%d", 
+                     static_cast<int>(left_value.attr_type()), 
+                     static_cast<int>(v.attr_type()));
+            continue;
+          }
+        }
+        if (cmp_result == 0) {
+          found = true;
+          break;
+        }
+      }
+
+      bool result = false;
+      if (comp_ == IN_OP) {
+        result = found;
+        // NOT IN 的特殊性：如果遇到 NULL，结果为 NULL (false)
+        // 这里简化处理，如果有 NULL 且没找到匹配，返回 false
+      } else {  // NOT_IN_OP
+        if (has_null && !found) {
+          result = false;  // NULL 存在时，NOT IN 结果为 false
+        } else {
+          result = !found;
+        }
+      }
+
+      value.set_boolean(result);
+      return RC::SUCCESS;
+    } else {
+      LOG_WARN("IN/NOT IN right operand should be a subquery");
+      return RC::INVALID_ARGUMENT;
+    }
+  }
+
+  // 处理普通比较操作
   Value left_value;
   Value right_value;
 
@@ -206,14 +334,42 @@ RC ComparisonExpr::get_value(const Tuple& tuple, Value& value) const
     LOG_WARN("failed to get value of left expression. rc=%s", strrc(rc));
     return rc;
   }
-  rc = right_->get_value(tuple, right_value);
-  if (rc != RC::SUCCESS) {
-    LOG_WARN("failed to get value of right expression. rc=%s", strrc(rc));
-    return rc;
+
+  // 如果左表达式返回 NULL，SQL 标准：任何与 NULL 的比较都应该返回 NULL (false)
+  if (left_value.attr_type() == AttrType::UNDEFINED) {
+    value.set_boolean(false);
+    return RC::SUCCESS;
+  }
+
+  // 检查右表达式是否为子查询
+  if (right_->type() == ExprType::SUBQUERY) {
+    SubQueryExpr *subquery_expr = static_cast<SubQueryExpr *>(right_.get());
+    // 传递外部查询的 tuple，以支持相关子查询
+    rc = subquery_expr->execute_single(right_value, &tuple);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to execute subquery for single value. rc=%s", strrc(rc));
+      return rc;
+    }
+    // 如果子查询返回空，right_value 可能是 NULL (UNDEFINED)
+    // SQL 标准：任何与 NULL 的比较都应该返回 NULL (false)
+    if (right_value.attr_type() == AttrType::UNDEFINED) {
+      value.set_boolean(false);
+      return RC::SUCCESS;
+    }
+  } else {
+    rc = right_->get_value(tuple, right_value);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to get value of right expression. rc=%s", strrc(rc));
+      return rc;
+    }
+    // 如果右表达式返回 NULL，也特殊处理
+    if (right_value.attr_type() == AttrType::UNDEFINED) {
+      value.set_boolean(false);
+      return RC::SUCCESS;
+    }
   }
 
   bool bool_value = false;
-
   rc = compare_value(left_value, right_value, bool_value);
   if (rc == RC::SUCCESS) {
     value.set_boolean(bool_value);

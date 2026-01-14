@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <functional>
 
 #include "common/log/log.h"
 #include "common/lang/string.h"
@@ -69,6 +70,9 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         CREATE
         DROP
         GROUP
+        ORDER
+        ASC
+        NOT
         TABLE
         TABLES
         INDEX
@@ -102,6 +106,10 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         HELP
         EXIT
         DOT //QUOTE
+        IS
+        NULL_T
+        NULLABLE
+        IN
         INTO
         VALUES
         FROM
@@ -145,9 +153,12 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
   vector<vector<Value>> *                    values_list;
   std::tuple<vector<string>, vector<ConditionSqlNode>> *relation_list;
   vector<string> *                           key_list;
+  vector<OrderBySqlNode> *                   order_by_list;
+  OrderBySqlNode *                           order_by_item;
   char *                                     cstring;
   int                                        number;
   float                                      floats;
+  bool                                       bool_value;
 }
 
 %destructor { delete $$; } <condition>
@@ -162,6 +173,8 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 // %destructor { delete $$; } <rel_attr_list>
 %destructor { delete $$; } <relation_list>
 %destructor { delete $$; } <key_list>
+%destructor { delete $$; } <order_by_list>
+%destructor { delete $$; } <order_by_item>
 
 %token <number> NUMBER
 %token <floats> FLOAT
@@ -192,8 +205,12 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 %type <expression>          aggregate_expression
 %type <expression_list>     expression_list
 %type <expression_list>     group_by
+%type <order_by_list>       order_by
+%type <order_by_list>       order_by_list
+%type <order_by_item>       order_by_item
 %type <cstring>             fields_terminated_by
 %type <cstring>             enclosed_by
+%type <bool_value>          nullable_option
 %type <sql_node>            calc_stmt
 %type <sql_node>            select_stmt
 %type <sql_node>            insert_stmt
@@ -372,19 +389,40 @@ attr_def_list:
     ;
     
 attr_def:
-    ID type LBRACE number RBRACE 
+    ID type LBRACE number RBRACE nullable_option
     {
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
       $$->length = ($$->type == AttrType::TEXTS) ? 4096 : $4;
+      $$->nullable = $6;
     }
-    | ID type
+    | ID type nullable_option
     {
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
       $$->length = ($$->type == AttrType::TEXTS) ? 4096 : 4;
+      $$->nullable = $3;
+    }
+    ;
+
+nullable_option:
+    /* empty */
+    {
+      $$ = false;  // 默认不允许NULL
+    }
+    | NULL_T
+    {
+      $$ = true;  // 允许NULL (使用 NULL 关键字)
+    }
+    | NULLABLE
+    {
+      $$ = true;  // 允许NULL (使用 nullable 关键字)
+    }
+    | NOT NULL_T
+    {
+      $$ = false;  // 不允许NULL
     }
     ;
 number:
@@ -472,6 +510,11 @@ value:
       $$ = new Value((float)$1);
       @$ = @1;
     }
+    |NULL_T {
+      $$ = new Value();
+      $$->set_type(AttrType::UNDEFINED);
+      @$ = @1;
+    }
     |SSS {
       char *tmp = common::substr($1,1,strlen($1)-2);
       int days = 0;
@@ -522,11 +565,58 @@ update_stmt:      /*  update 语句的语法解析树*/
     }
     ;
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT expression_list FROM rel_list where group_by
+    SELECT expression_list FROM rel_list where group_by order_by
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
         $$->selection.expressions.swap(*$2);
+        
+        // 递归保存表达式列表中的子查询 ParsedSqlNode（包括嵌套的）
+        function<void(Expression *)> collect_subqueries = [&](Expression *expr) {
+          if (expr == nullptr) return;
+          if (expr->type() == ExprType::UNBOUND_SUBQUERY) {
+            UnboundSubQueryExpr *subquery_expr = static_cast<UnboundSubQueryExpr *>(expr);
+            ParsedSqlNode *parsed_node = subquery_expr->parsed_node();
+            if (parsed_node != nullptr) {
+              $$->subquery_nodes.emplace_back(parsed_node);
+            }
+          } else {
+            // 递归查找子表达式中的子查询
+            switch (expr->type()) {
+              case ExprType::ARITHMETIC: {
+                ArithmeticExpr *arith = static_cast<ArithmeticExpr *>(expr);
+                if (arith->left()) collect_subqueries(arith->left().get());
+                if (arith->right()) collect_subqueries(arith->right().get());
+              } break;
+              case ExprType::CAST: {
+                CastExpr *cast = static_cast<CastExpr *>(expr);
+                if (cast->child()) collect_subqueries(cast->child().get());
+              } break;
+              case ExprType::COMPARISON: {
+                ComparisonExpr *cmp = static_cast<ComparisonExpr *>(expr);
+                if (cmp->left()) collect_subqueries(cmp->left().get());
+                if (cmp->right()) collect_subqueries(cmp->right().get());
+              } break;
+              case ExprType::CONJUNCTION: {
+                ConjunctionExpr *conj = static_cast<ConjunctionExpr *>(expr);
+                for (auto &child : conj->children()) {
+                  collect_subqueries(child.get());
+                }
+              } break;
+              case ExprType::UNBOUND_AGGREGATION: {
+                UnboundAggregateExpr *agg = static_cast<UnboundAggregateExpr *>(expr);
+                if (agg->child()) collect_subqueries(agg->child().get());
+              } break;
+              default:
+                break;
+            }
+          }
+        };
+        
+        for (const auto &expr : $$->selection.expressions) {
+          collect_subqueries(expr.get());
+        }
+        
         delete $2;
       }
 
@@ -541,21 +631,54 @@ select_stmt:        /*  select 语句的语法解析树*/
           $$->selection.conditions.insert($$->selection.conditions.end(), 
                                          $5->begin(), 
                                          $5->end());
+          
+          // 保存子查询的 ParsedSqlNode，防止被过早释放
+          for (const ConditionSqlNode &cond : *$5) {
+            if (cond.right_is_subquery && cond.right_subquery_node != nullptr) {
+              $$->subquery_nodes.emplace_back(cond.right_subquery_node);
+            }
+          }
+          // 同时检查 rel_conditions 中的子查询
+          for (const ConditionSqlNode &cond : rel_conditions) {
+            if (cond.right_is_subquery && cond.right_subquery_node != nullptr) {
+              $$->subquery_nodes.emplace_back(cond.right_subquery_node);
+            }
+          }
+          
           delete $5;
         } else {
           // 如果$5为空
           $$->selection.conditions.swap(rel_conditions);
+          // 保存 rel_conditions 中的子查询节点
+          for (const ConditionSqlNode &cond : rel_conditions) {
+            if (cond.right_is_subquery && cond.right_subquery_node != nullptr) {
+              $$->subquery_nodes.emplace_back(cond.right_subquery_node);
+            }
+          }
         }
         delete $4;
       } else if ($5 != nullptr) {
         // 如果$4为空但$5不为空
         $$->selection.conditions.swap(*$5);
+        
+        // 保存子查询的 ParsedSqlNode
+        for (const ConditionSqlNode &cond : *$5) {
+          if (cond.right_is_subquery && cond.right_subquery_node != nullptr) {
+            $$->subquery_nodes.emplace_back(cond.right_subquery_node);
+          }
+        }
+        
         delete $5;
       }
 
       if ($6 != nullptr) {
         $$->selection.group_by.swap(*$6);
         delete $6;
+      }
+
+      if ($7 != nullptr) {
+        $$->selection.order_by.swap(*$7);
+        delete $7;
       }
     }
     ;
@@ -620,6 +743,14 @@ expression:
     }
     | aggregate_expression {
       $$ = $1;
+    }
+    | LBRACE select_stmt RBRACE {
+      // 子查询表达式
+      SelectSqlNode *select_sql = &$2->selection;
+      $$ = new UnboundSubQueryExpr(select_sql, $2);
+      $$->set_name(token_name(sql_string, &@$));
+      // 注意：不删除 $2，需要在外层 select_stmt 中保存 ParsedSqlNode
+      // 通过 parsed_node_ 指针保存，外层会将其添加到 subquery_nodes 中
     }
     ;
 
@@ -734,6 +865,7 @@ condition:
       $$->left_attr = *$1;
       $$->right_is_attr = 0;
       $$->right_value = *$3;
+      $$->right_is_subquery = 0;
       $$->comp = $2;
 
       delete $1;
@@ -746,6 +878,7 @@ condition:
       $$->left_value = *$1;
       $$->right_is_attr = 0;
       $$->right_value = *$3;
+      $$->right_is_subquery = 0;
       $$->comp = $2;
 
       delete $1;
@@ -758,6 +891,7 @@ condition:
       $$->left_attr = *$1;
       $$->right_is_attr = 1;
       $$->right_attr = *$3;
+      $$->right_is_subquery = 0;
       $$->comp = $2;
 
       delete $1;
@@ -770,10 +904,182 @@ condition:
       $$->left_value = *$1;
       $$->right_is_attr = 1;
       $$->right_attr = *$3;
+      $$->right_is_subquery = 0;
       $$->comp = $2;
 
       delete $1;
       delete $3;
+    }
+    | rel_attr IN LBRACE select_stmt RBRACE
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$4->selection;
+      $$->right_subquery_node = $4;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      $$->comp = IN_OP;
+      delete $1;
+      // 不删除 $4，因为 right_subquery_node 需要保持有效
+    }
+    | rel_attr NOT IN LBRACE select_stmt RBRACE
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$5->selection;
+      $$->right_subquery_node = $5;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      $$->comp = NOT_IN_OP;
+      delete $1;
+      // 不删除 $5，因为 right_subquery_node 需要保持有效
+    }
+    | rel_attr comp_op LBRACE select_stmt RBRACE
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$4->selection;
+      $$->right_subquery_node = $4;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      $$->comp = $2;
+      delete $1;
+      // 不删除 $4，因为 right_subquery_node 需要保持有效
+    }
+    | value comp_op LBRACE select_stmt RBRACE
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 0;
+      $$->left_value = *$1;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$4->selection;
+      $$->right_subquery_node = $4;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      $$->comp = $2;
+      delete $1;
+      // 不删除 $4，因为 right_subquery_node 需要保持有效
+    }
+    | LBRACE select_stmt RBRACE comp_op rel_attr
+    {
+      // 支持左边是子查询的条件，如 (select avg(...)) = col1
+      // 为了保持兼容性，将其转换为 col1 = (select ...) 的形式（交换操作数和操作符）
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$5;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$2->selection;
+      $$->right_subquery_node = $2;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      // 反转比较操作符（如果需要）
+      CompOp comp = $4;
+      switch (comp) {
+        case LESS_THAN: comp = GREAT_THAN; break;
+        case GREAT_THAN: comp = LESS_THAN; break;
+        case LESS_EQUAL: comp = GREAT_EQUAL; break;
+        case GREAT_EQUAL: comp = LESS_EQUAL; break;
+        // EQUAL_TO, NOT_EQUAL 不需要反转
+        default: break;
+      }
+      $$->comp = comp;
+      delete $5;
+      // 不删除 $2，因为 right_subquery_node 需要保持有效
+    }
+    | LBRACE select_stmt RBRACE comp_op value
+    {
+      // 支持左边是子查询的条件，如 (select avg(...)) = 5
+      // 为了保持兼容性，将其转换为 5 = (select ...) 的形式（交换操作数和操作符）
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 0;
+      $$->left_value = *$5;
+      $$->right_is_attr = 0;
+      $$->right_is_subquery = 1;
+      $$->right_subquery = &$2->selection;
+      $$->right_subquery_node = $2;  // 保存 ParsedSqlNode 指针，防止被过早释放
+      // 反转比较操作符（如果需要）
+      CompOp comp = $4;
+      switch (comp) {
+        case LESS_THAN: comp = GREAT_THAN; break;
+        case GREAT_THAN: comp = LESS_THAN; break;
+        case LESS_EQUAL: comp = GREAT_EQUAL; break;
+        case GREAT_EQUAL: comp = LESS_EQUAL; break;
+        // EQUAL_TO, NOT_EQUAL 不需要反转
+        default: break;
+      }
+      $$->comp = comp;
+      delete $5;
+      // 不删除 $2，因为 right_subquery_node 需要保持有效
+    }
+    | rel_attr IS NULL_T
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_value.set_type(AttrType::UNDEFINED);
+      $$->right_is_subquery = 0;
+      $$->comp = IS_NULL_OP;
+      delete $1;
+    }
+    | rel_attr IS NOT NULL_T
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_is_attr = 1;
+      $$->left_attr = *$1;
+      $$->right_is_attr = 0;
+      $$->right_value.set_type(AttrType::UNDEFINED);
+      $$->right_is_subquery = 0;
+      $$->comp = IS_NOT_NULL_OP;
+      delete $1;
+    }
+    | expression IS NULL_T
+    {
+      // expression IS NULL应该在表达式系统中处理
+      // 如果expression是ValueExpr（字面量值），我们可以提取它的值
+      $$ = new ConditionSqlNode;
+      $$->right_is_attr = 0;
+      $$->right_value.set_type(AttrType::UNDEFINED);
+      $$->right_is_subquery = 0;
+      $$->comp = IS_NULL_OP;
+      
+      // 检查表达式是否是ValueExpr（字面量值）
+      if ($1->type() == ExprType::VALUE) {
+        ValueExpr *value_expr = static_cast<ValueExpr*>($1);
+        $$->left_is_attr = 0;
+        $$->left_value = value_expr->get_value();  // 提取字面量的值
+        delete $1;  // 清理表达式
+      } else {
+        // 对于非字面量表达式，无法在condition系统中直接处理
+        // 这将在表达式构建器中处理，但这里我们需要标记
+        $$->left_is_attr = 0;
+        $$->left_value.set_type(AttrType::UNDEFINED);  // 标记为需要表达式系统处理
+        delete $1;  // 清理表达式，因为condition系统无法保存它
+        // 注意：这种情况应该在表达式构建器中正确处理
+      }
+    }
+    | expression IS NOT NULL_T
+    {
+      // expression IS NOT NULL应该在表达式系统中处理
+      $$ = new ConditionSqlNode;
+      $$->right_is_attr = 0;
+      $$->right_value.set_type(AttrType::UNDEFINED);
+      $$->right_is_subquery = 0;
+      $$->comp = IS_NOT_NULL_OP;
+      
+      // 检查表达式是否是ValueExpr（字面量值）
+      if ($1->type() == ExprType::VALUE) {
+        ValueExpr *value_expr = static_cast<ValueExpr*>($1);
+        $$->left_is_attr = 0;
+        $$->left_value = value_expr->get_value();  // 提取字面量的值
+        delete $1;  // 清理表达式
+      } else {
+        // 对于非字面量表达式，无法在condition系统中直接处理
+        $$->left_is_attr = 0;
+        $$->left_value.set_type(AttrType::UNDEFINED);  // 标记为需要表达式系统处理
+        delete $1;  // 清理表达式
+      }
     }
     ;
 
@@ -784,6 +1090,8 @@ comp_op:
     | LE { $$ = LESS_EQUAL; }
     | GE { $$ = GREAT_EQUAL; }
     | NE { $$ = NOT_EQUAL; }
+    | IN { $$ = IN_OP; }
+    | NOT IN { $$ = NOT_IN_OP; }
     ;
 
 // your code here
@@ -797,6 +1105,53 @@ group_by:
       // group by 的表达式范围与select查询值的表达式范围是不同的，比如group by不支持 *
       // 但是这里没有处理。
       $$ = $3;
+    }
+    ;
+
+order_by:
+    /* empty */
+    {
+      $$ = nullptr;
+    }
+    | ORDER BY order_by_list
+    {
+      $$ = $3;
+    }
+    ;
+
+order_by_list:
+    order_by_item
+    {
+      $$ = new vector<OrderBySqlNode>();
+      $$->push_back(std::move(*$1));
+      delete $1;
+    }
+    | order_by_list COMMA order_by_item
+    {
+      $$ = $1;
+      $$->push_back(std::move(*$3));
+      delete $3;
+    }
+    ;
+
+order_by_item:
+    expression
+    {
+      $$ = new OrderBySqlNode();
+      $$->expression = unique_ptr<Expression>($1);
+      $$->asc = true;  // 默认升序
+    }
+    | expression ASC
+    {
+      $$ = new OrderBySqlNode();
+      $$->expression = unique_ptr<Expression>($1);
+      $$->asc = true;
+    }
+    | expression DESC
+    {
+      $$ = new OrderBySqlNode();
+      $$->expression = unique_ptr<Expression>($1);
+      $$->asc = false;
     }
     ;
 load_data_stmt:

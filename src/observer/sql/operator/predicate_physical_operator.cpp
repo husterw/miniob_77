@@ -49,7 +49,15 @@ RC PredicatePhysicalOperator::next()
     Value value;
     rc = expression_->get_value(*tuple, value);
     if (rc != RC::SUCCESS) {
-      return rc;
+      // 对于严重错误（如 INVALID_ARGUMENT - 标量子查询返回多行），应该向上传播错误
+      // INVALID_ARGUMENT 通常表示子查询返回多行或返回了错误的列数，这是不能容忍的错误
+      if (rc == RC::INVALID_ARGUMENT) {
+        LOG_WARN("expression evaluation failed with INVALID_ARGUMENT in predicate operator, propagating error. rc=%s", strrc(rc));
+        return rc;  // 向上传播错误
+      }
+      // 其他错误（如 NOTFOUND）可以跳过这一行
+      LOG_TRACE("expression evaluation failed in predicate operator, skipping row. rc=%s", strrc(rc));
+      continue;
     }
 
     if (value.get_boolean()) {

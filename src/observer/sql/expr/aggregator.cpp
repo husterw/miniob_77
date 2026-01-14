@@ -17,6 +17,11 @@ See the Mulan PSL v2 for more details. */
 
 RC SumAggregator::accumulate(const Value& value)
 {
+  // 根据 SQL 标准，SUM 应该忽略 NULL 值
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
+  }
+  
   if (value_.attr_type() == AttrType::UNDEFINED) {
     value_ = value;
     return RC::SUCCESS;
@@ -37,6 +42,11 @@ RC SumAggregator::evaluate(Value& result)
 
 RC AvgAggregator::accumulate(const Value& value)
 {
+  // 根据 SQL 标准，AVG 应该忽略 NULL 值
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
+  }
+  
   if (value_.attr_type() == AttrType::UNDEFINED) {
     value_ = value;
     count_ = 1;
@@ -53,6 +63,12 @@ RC AvgAggregator::accumulate(const Value& value)
 
 RC AvgAggregator::evaluate(Value& result)
 {
+  // 如果没有累积任何值（空输入），AVG 应该返回 NULL（UNDEFINED）
+  if (value_.attr_type() == AttrType::UNDEFINED || count_ == 0) {
+    result.set_type(AttrType::UNDEFINED);
+    return RC::SUCCESS;
+  }
+  
   if (value_.attr_type() == AttrType::INTS) {
     float avg = static_cast<float>(value_.get_int()) / count_;
     result.set_type(AttrType::FLOATS);
@@ -63,16 +79,27 @@ RC AvgAggregator::evaluate(Value& result)
     result.set_type(AttrType::FLOATS);
     result.set_float(avg);
   }
+  else {
+    // 如果类型不是 INTS 或 FLOATS，返回 UNDEFINED
+    result.set_type(AttrType::UNDEFINED);
+  }
 
   return RC::SUCCESS;
 }
 
 RC CountAggregator::accumulate(const Value& value)
 {
-  if (value.attr_type() == AttrType::UNDEFINED) {
+  // COUNT(*) 的情况，value 总是 Value(1)，不会是 UNDEFINED
+  // COUNT(column) 的情况，如果 value 是 UNDEFINED (NULL)，应该忽略
+  // 由于 COUNT(*) 的 child 是 Value(1)，它永远不会是 UNDEFINED，所以这样处理是正确的
+  if (value_.attr_type() == AttrType::UNDEFINED) {
     value_.set_type(AttrType::INTS);
-    value_.set_int(1);
-    return RC::SUCCESS;
+    value_.set_int(0);
+  }
+  
+  // 对于 COUNT(column)，如果值是 NULL，跳过计数
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
   }
 
   value_.set_int(value_.get_int() + 1);
@@ -81,12 +108,23 @@ RC CountAggregator::accumulate(const Value& value)
 
 RC CountAggregator::evaluate(Value& result)
 {
-  result = value_;
+  // 如果没有累积任何值（空输入），COUNT 应该返回 0，而不是 NULL
+  if (value_.attr_type() == AttrType::UNDEFINED) {
+    result.set_type(AttrType::INTS);
+    result.set_int(0);
+  } else {
+    result = value_;
+  }
   return RC::SUCCESS;
 }
 
 RC MaxAggregator::accumulate(const Value& value)
 {
+  // 根据 SQL 标准，MAX 应该忽略 NULL 值
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
+  }
+  
   if (value_.attr_type() == AttrType::UNDEFINED) {
     value_ = value;
     return RC::SUCCESS;
@@ -109,6 +147,11 @@ RC MaxAggregator::evaluate(Value& result)
 
 RC MinAggregator::accumulate(const Value& value)
 {
+  // 根据 SQL 标准，MIN 应该忽略 NULL 值
+  if (value.attr_type() == AttrType::UNDEFINED) {
+    return RC::SUCCESS;  // 跳过 NULL 值
+  }
+  
   if (value_.attr_type() == AttrType::UNDEFINED) {
     value_ = value;
     return RC::SUCCESS;

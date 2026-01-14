@@ -26,6 +26,11 @@ class Expression;
  * @defgroup SQLParser SQL Parser
  */
 
+// 前向声明
+struct SelectSqlNode;
+class ParsedSqlNode;
+class ParsedSqlNode;
+
 /**
  * @brief 描述一个属性
  * @ingroup SQLParser
@@ -51,6 +56,10 @@ enum CompOp
   LESS_THAN,    ///< "<"
   GREAT_EQUAL,  ///< ">="
   GREAT_THAN,   ///< ">"
+  IN_OP,        ///< "IN"
+  NOT_IN_OP,    ///< "NOT IN"
+  IS_NULL_OP,   ///< "IS NULL"
+  IS_NOT_NULL_OP, ///< "IS NOT NULL"
   NO_OP
 };
 
@@ -73,6 +82,9 @@ struct ConditionSqlNode
                                  ///< 1时，操作符右边是属性名，0时，是属性值
   RelAttrSqlNode right_attr;     ///< right-hand side attribute if right_is_attr = TRUE 右边的属性
   Value          right_value;    ///< right-hand side value if right_is_attr = FALSE
+  SelectSqlNode *right_subquery; ///< 如果右操作数是子查询，存储子查询的 SQL 节点（当 right_is_subquery = 1 时）
+  ParsedSqlNode *right_subquery_node; ///< 保存子查询的 ParsedSqlNode，确保在解析完成后才释放（当 right_is_subquery = 1 时）
+  int            right_is_subquery; ///< 1时，操作符右边是子查询
 };
 
 /**
@@ -86,12 +98,19 @@ struct ConditionSqlNode
  * 甚至可以包含复杂的表达式。
  */
 
+struct OrderBySqlNode
+{
+  unique_ptr<Expression> expression;  ///< 排序字段表达式
+  bool                   asc;         ///< true 表示升序，false 表示降序
+};
+
 struct SelectSqlNode
 {
   vector<unique_ptr<Expression>> expressions;  ///< 查询的表达式
   vector<string>                 relations;    ///< 查询的表
   vector<ConditionSqlNode>       conditions;   ///< 查询条件，使用AND串联起来多个条件
   vector<unique_ptr<Expression>> group_by;     ///< group by clause
+  vector<OrderBySqlNode>         order_by;     ///< order by clause
 };
 
 struct JoinRelSqlNode
@@ -152,6 +171,7 @@ struct AttrInfoSqlNode
   AttrType type;    ///< Type of attribute
   string   name;    ///< Attribute name
   size_t   length;  ///< Length of attribute
+  bool     nullable; ///< Whether the attribute can be NULL
 };
 
 /**
@@ -323,10 +343,12 @@ public:
   LoadDataSqlNode     load_data;
   ExplainSqlNode      explain;
   SetVariableSqlNode  set_variable;
+  vector<unique_ptr<ParsedSqlNode>> subquery_nodes;  ///< 保存子查询的 ParsedSqlNode，确保在使用期间不被释放
 
 public:
   ParsedSqlNode();
   explicit ParsedSqlNode(SqlCommandFlag flag);
+  ~ParsedSqlNode();
 };
 
 /**

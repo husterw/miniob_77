@@ -18,6 +18,8 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/physical_operator.h"
 #include "storage/record/record_manager.h"
 
+class CompositeTuple;
+
 /**
  * @brief 索引扫描物理算子
  * @ingroup PhysicalOperator
@@ -41,10 +43,15 @@ public:
   Tuple *current_tuple() override;
 
   void set_predicates(vector<unique_ptr<Expression>> &&exprs);
+  
+  /// @brief 设置外部查询的 tuple（用于相关子查询）
+  void set_outer_tuple(const Tuple *outer_tuple);
 
 private:
   // 与TableScanPhysicalOperator代码相同，可以优化
   RC filter(RowTuple &tuple, bool &result);
+  /// @brief 更新 composite_tuple_，使其包含外部查询和当前 tuple 的所有字段
+  void update_composite_tuple();
 
 private:
   Trx          *trx_           = nullptr;
@@ -62,4 +69,6 @@ private:
   bool  right_inclusive_ = false;
 
   vector<unique_ptr<Expression>> predicates_;
+  const Tuple                    *outer_tuple_ = nullptr;  ///< 外部查询的 tuple（用于相关子查询）
+  unique_ptr<CompositeTuple>     composite_tuple_;  ///< 组合外部查询和当前 tuple 的 CompositeTuple
 };

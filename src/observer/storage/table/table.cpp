@@ -266,6 +266,19 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
   for (int i = 0; i < value_num && OB_SUCC(rc); i++) {
     const FieldMeta *field = table_meta_.field(i + normal_field_start_index);
     const Value &    value = values[i];
+    
+    // 如果值是NULL (UNDEFINED)
+    if (value.attr_type() == AttrType::UNDEFINED) {
+      // 检查字段是否允许NULL
+      if (!field->nullable()) {
+        LOG_WARN("Cannot insert NULL into non-nullable column '%s'", field->name());
+        free(record_data);
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
+      // 对于NULL值，字段位置保持为0（已由memset初始化），不需要设置数据
+      continue;
+    }
+    
     if (field->type() != value.attr_type()) {
       Value real_value;
       rc = Value::cast_to(value, field->type(), real_value);

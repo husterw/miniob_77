@@ -26,6 +26,8 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/project_logical_operator.h"
 #include "sql/operator/table_get_logical_operator.h"
 #include "sql/operator/group_by_logical_operator.h"
+#include "sql/operator/update_logical_operator.h"
+#include "sql/operator/order_by_logical_operator.h"
 
 #include "sql/stmt/calc_stmt.h"
 #include "sql/stmt/delete_stmt.h"
@@ -34,6 +36,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/stmt/insert_stmt.h"
 #include "sql/stmt/select_stmt.h"
 #include "sql/stmt/stmt.h"
+#include "sql/stmt/update_stmt.h"
 
 #include "sql/expr/expression_iterator.h"
 
@@ -68,6 +71,12 @@ RC LogicalPlanGenerator::create(Stmt *stmt, unique_ptr<LogicalOperator> &logical
       rc = create_plan(delete_stmt, logical_operator);
     } break;
 
+    case StmtType::UPDATE: {
+      UpdateStmt *update_stmt = static_cast<UpdateStmt *>(stmt);
+
+      rc = create_plan(update_stmt, logical_operator);
+    } break;
+
     case StmtType::EXPLAIN: {
       ExplainStmt *explain_stmt = static_cast<ExplainStmt *>(stmt);
 
@@ -94,10 +103,14 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
   last_oper = &table_oper;
   unique_ptr<LogicalOperator> predicate_oper;
 
-  RC rc = create_plan(select_stmt->filter_stmt(), predicate_oper);
-  if (OB_FAIL(rc)) {
-    LOG_WARN("failed to create predicate logical plan. rc=%s", strrc(rc));
-    return rc;
+  RC rc = RC::SUCCESS;
+  // 只有当 filter_stmt 不为空时才创建 predicate logical plan
+  if (select_stmt->filter_stmt() != nullptr) {
+    rc = create_plan(select_stmt->filter_stmt(), predicate_oper);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to create predicate logical plan. rc=%s", strrc(rc));
+      return rc;
+    }
   }
 
   const vector<Table *> &tables = select_stmt->tables();
@@ -115,11 +128,47 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
   }
 
 
-  if (predicate_oper) {
+  // 处理子查询条件
+  const vector<unique_ptr<Expression>> &subquery_conditions = select_stmt->subquery_conditions();
+  unique_ptr<LogicalOperator> subquery_combined_oper;  // 在循环外部声明，确保作用域足够
+  
+  if (!subquery_conditions.empty()) {
+    // 如果有普通条件，先处理普通条件
+    if (predicate_oper) {
+      if (*last_oper) {
+        predicate_oper->add_child(std::move(*last_oper));
+      }
+      last_oper = &predicate_oper;
+    }
+
+    // 为每个子查询条件创建 PredicateLogicalOperator
+    // 逐个处理子查询条件，将前一个作为后一个的子节点
+    for (size_t i = 0; i < subquery_conditions.size(); i++) {
+      // 在循环外部创建表达式副本，避免在 copy() 过程中访问已销毁的栈变量
+      unique_ptr<Expression> copied_expr = subquery_conditions[i]->copy();
+      unique_ptr<LogicalOperator> subquery_predicate_oper = 
+          make_unique<PredicateLogicalOperator>(std::move(copied_expr));
+      
+      if (i == 0) {
+        // 第一个子查询条件，添加 last_oper 作为子节点
+        if (*last_oper) {
+          subquery_predicate_oper->add_child(std::move(*last_oper));
+        }
+        subquery_combined_oper = std::move(subquery_predicate_oper);
+      } else {
+        // 后续的子查询条件，将前一个作为子节点
+        subquery_predicate_oper->add_child(std::move(subquery_combined_oper));
+        subquery_combined_oper = std::move(subquery_predicate_oper);
+      }
+    }
+    
+    // 更新 last_oper 指向组合后的子查询 operator
+    last_oper = &subquery_combined_oper;
+  } else if (predicate_oper) {
+    // 只有普通条件
     if (*last_oper) {
       predicate_oper->add_child(std::move(*last_oper));
     }
-
     last_oper = &predicate_oper;
   }
 
@@ -133,9 +182,25 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
   if (group_by_oper) {
     if (*last_oper) {
       group_by_oper->add_child(std::move(*last_oper));
+      // 注意：move 后，*last_oper 变为 nullptr，但 last_oper 指针仍然有效
     }
 
     last_oper = &group_by_oper;
+  }
+
+  unique_ptr<LogicalOperator> order_by_oper;
+  rc = create_order_by_plan(select_stmt, order_by_oper);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to create order by logical plan. rc=%s", strrc(rc));
+    return rc;
+  }
+
+  if (order_by_oper) {
+    if (*last_oper) {
+      order_by_oper->add_child(std::move(*last_oper));
+    }
+
+    last_oper = &order_by_oper;
   }
 
   unique_ptr<LogicalOperator> project_oper = make_unique<ProjectLogicalOperator>(std::move(select_stmt->query_expressions()));
@@ -151,6 +216,12 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
 
 RC LogicalPlanGenerator::create_plan(FilterStmt *filter_stmt, unique_ptr<LogicalOperator> &logical_operator)
 {
+  if (nullptr == filter_stmt) {
+    // 如果没有 filter_stmt，返回空 operator
+    logical_operator = nullptr;
+    return RC::SUCCESS;
+  }
+
   RC                                  rc = RC::SUCCESS;
   vector<unique_ptr<Expression>> cmp_exprs;
   const vector<FilterUnit *>    &filter_units = filter_stmt->filter_units();
@@ -166,7 +237,12 @@ RC LogicalPlanGenerator::create_plan(FilterStmt *filter_stmt, unique_ptr<Logical
                                      ? static_cast<Expression *>(new FieldExpr(filter_obj_right.field))
                                      : static_cast<Expression *>(new ValueExpr(filter_obj_right.value)));
 
-    if (left->value_type() != right->value_type()) {
+    // 如果涉及NULL值（UNDEFINED类型），跳过类型转换
+    // 因为根据SQL标准，任何与NULL的比较都返回FALSE（除了IS NULL和IS NOT NULL）
+    // 这些操作在ComparisonExpr::get_value中已经特殊处理了
+    bool has_null = (left->value_type() == AttrType::UNDEFINED || right->value_type() == AttrType::UNDEFINED);
+    
+    if (!has_null && left->value_type() != right->value_type()) {
       auto left_to_right_cost = implicit_cast_cost(left->value_type(), right->value_type());
       auto right_to_left_cost = implicit_cast_cost(right->value_type(), left->value_type());
       if (left_to_right_cost <= right_to_left_cost && left_to_right_cost != INT32_MAX) {
@@ -263,6 +339,34 @@ RC LogicalPlanGenerator::create_plan(DeleteStmt *delete_stmt, unique_ptr<Logical
   return rc;
 }
 
+
+RC LogicalPlanGenerator::create_plan(UpdateStmt *update_stmt, unique_ptr<LogicalOperator> &logical_operator)
+{
+  Table                      *table       = update_stmt->table();
+  FilterStmt                 *filter_stmt = update_stmt->filter_stmt();
+  unique_ptr<LogicalOperator> table_get_oper(new TableGetLogicalOperator(table, ReadWriteMode::READ_WRITE));
+
+  unique_ptr<LogicalOperator> predicate_oper;
+
+  RC rc = create_plan(filter_stmt, predicate_oper);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
+
+  unique_ptr<LogicalOperator> update_oper(
+      new UpdateLogicalOperator(table, update_stmt->field_name(), update_stmt->value()));
+
+  if (predicate_oper) {
+    predicate_oper->add_child(std::move(table_get_oper));
+    update_oper->add_child(std::move(predicate_oper));
+  } else {
+    update_oper->add_child(std::move(table_get_oper));
+  }
+
+  logical_operator = std::move(update_oper);
+  return rc;
+}
+
 RC LogicalPlanGenerator::create_plan(ExplainStmt *explain_stmt, unique_ptr<LogicalOperator> &logical_operator)
 {
   unique_ptr<LogicalOperator> child_oper;
@@ -355,5 +459,24 @@ RC LogicalPlanGenerator::create_group_by_plan(SelectStmt *select_stmt, unique_pt
   auto group_by_oper = make_unique<GroupByLogicalOperator>(std::move(group_by_expressions),
                                                            std::move(aggregate_expressions));
   logical_operator = std::move(group_by_oper);
+  return RC::SUCCESS;
+}
+
+RC LogicalPlanGenerator::create_order_by_plan(SelectStmt *select_stmt, unique_ptr<LogicalOperator> &logical_operator)
+{
+  const vector<pair<unique_ptr<Expression>, bool>> &order_by_expressions = select_stmt->order_by();
+  
+  if (order_by_expressions.empty()) {
+    // 没有 order by，不需要排序
+    return RC::SUCCESS;
+  }
+
+  vector<pair<unique_ptr<Expression>, bool>> order_by_exprs;
+  for (const auto &order_by_expr : order_by_expressions) {
+    order_by_exprs.emplace_back(order_by_expr.first->copy(), order_by_expr.second);
+  }
+
+  auto order_by_oper = make_unique<OrderByLogicalOperator>(std::move(order_by_exprs));
+  logical_operator = std::move(order_by_oper);
   return RC::SUCCESS;
 }
