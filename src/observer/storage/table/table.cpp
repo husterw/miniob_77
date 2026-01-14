@@ -141,7 +141,6 @@ RC Table::drop(Db *db, const char *path)
   // 删除数据文件
   string data_file = table_data_file(db_->path().c_str(), name());
   if (std::filesystem::exists(data_file)) {
-    // 注意：不调用 bpm.close_file，避免重复释放。引擎析构时会处理。
     if (!std::filesystem::remove(data_file)) {
       printf("Failed to remove data file: %s\n", data_file.c_str());
       return rc;
@@ -159,7 +158,6 @@ RC Table::drop(Db *db, const char *path)
       }
     }
   }
-
   printf("Successfully dropped table %s\n", name());
   return rc;
 }

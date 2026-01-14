@@ -26,7 +26,8 @@ InsertPhysicalOperator::InsertPhysicalOperator(Table *table, vector<vector<Value
 RC InsertPhysicalOperator::open(Trx *trx)
 {
   RC rc = RC::SUCCESS;
-  vector<Record> records; 
+  vector<Record> records;
+  vector<Record> inserted_records;
 
   for (const auto &values_hang : values_) {
     Record record;
@@ -35,7 +36,7 @@ RC InsertPhysicalOperator::open(Trx *trx)
     rc = table_->make_record(row_size, values_hang.data(), record);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to make record. row_size=%d, rc=%s", row_size, strrc(rc));
-      return rc; 
+      return rc;
     }
     
     records.push_back(std::move(record));
@@ -45,12 +46,20 @@ RC InsertPhysicalOperator::open(Trx *trx)
     rc = trx->insert_record(table_, record);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to insert record by transaction. table=%s, rc=%s", table_->name(), strrc(rc));
-      trx->rollback(); 
+      
+      for (auto &inserted_record : inserted_records) {
+        RC delete_rc = trx->delete_record(table_, inserted_record);
+        if (delete_rc != RC::SUCCESS) {
+          LOG_ERROR("failed to delete inserted record when rollback. table=%s, rc=%s", table_->name(), strrc(delete_rc));
+        }
+      }
+      
       return rc;
     }
+    
+    inserted_records.push_back(std::move(record));
   }
   
-  rc = trx->commit(); 
   return rc;
 }
 
