@@ -255,6 +255,11 @@ char* Value::data() const
 
 string Value::to_string() const
 {
+  // NULL 值 (UNDEFINED) 应该返回 "NULL" 字符串
+  if (this->attr_type_ == AttrType::UNDEFINED) {
+    return "NULL";
+  }
+  
   string res;
   RC     rc = DataType::type_instance(this->attr_type_)->to_string(*this, res);
   if (OB_FAIL(rc)) {
