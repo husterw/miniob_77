@@ -177,7 +177,13 @@ RC ExpressionBinder::bind_unbound_field_expression(
 
     Field      field(table, field_meta);
     FieldExpr *field_expr = new FieldExpr(field);
-    field_expr->set_name(field_name);
+    // 如果指定了表名，使用 table_name.field_name 格式；否则只使用字段名
+    if (!is_blank(table_name)) {
+      string full_name = string(table_name) + "." + string(field_name);
+      field_expr->set_name(full_name);
+    } else {
+      field_expr->set_name(field_name);
+    }
     bound_expressions.emplace_back(field_expr);
   }
 
