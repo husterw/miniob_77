@@ -129,7 +129,6 @@ RC Table::create(Db *db, int32_t table_id, const char *path, const char *name, c
 RC Table::drop(Db *db, const char *path)
 {
   RC rc = RC::SUCCESS;
-
   // 删除元数据文件
   if (std::filesystem::exists(path)) {
     if (!std::filesystem::remove(path)) {
@@ -137,7 +136,6 @@ RC Table::drop(Db *db, const char *path)
       return rc;
     }
   }
-
   // 删除数据文件
   string data_file = table_data_file(db_->path().c_str(), name());
   if (std::filesystem::exists(data_file)) {
@@ -146,7 +144,6 @@ RC Table::drop(Db *db, const char *path)
       return rc;
     }
   }
-
   // 删除索引文件
   for (int i = 0; i < table_meta_.index_num(); ++i) {
     const IndexMeta *index_meta = table_meta_.index(i);
@@ -316,9 +313,9 @@ RC Table::get_chunk_scanner(ChunkFileScanner &scanner, Trx *trx, ReadWriteMode m
   return engine_->get_chunk_scanner(scanner, trx, mode);
 }
 
-RC Table::create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name)
+RC Table::create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name, bool Unique)
 {
-  return engine_->create_index(trx, field_meta, index_name);
+  return engine_->create_index(trx, field_meta, index_name, Unique);
 }
 
 RC Table::delete_record(const Record &record)

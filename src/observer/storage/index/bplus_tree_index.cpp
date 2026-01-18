@@ -82,6 +82,21 @@ RC BplusTreeIndex::close()
 
 RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 {
+  if(index_meta_.unique_type()) {
+    // check duplicate key
+    list<RID> existing_rids;
+    RC rc = index_handler_.get_entry(record + field_meta_.offset(), field_meta_.len(), existing_rids);
+    if (rc != RC::SUCCESS && rc != RC::RECORD_INVALID_KEY) {
+      LOG_WARN("Failed to check duplicate key when insert entry to unique index, rc=%d:%s",
+               rc, strrc(rc));
+      return rc;
+    }
+    if (!existing_rids.empty()) {
+      LOG_WARN("Duplicate key when insert entry to unique index. index:%s, field:%s, key value at offset %d",
+               index_meta_.name(), index_meta_.field(), field_meta_.offset());
+      return RC::RECORD_DUPLICATE_KEY;
+    }
+  }
   return index_handler_.insert_entry(record + field_meta_.offset(), rid);
 }
 

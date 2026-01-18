@@ -76,6 +76,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         SELECT
         INNER
         JOIN
+        UNIQUE
         DESC
         SHOW
         SYNC
@@ -324,6 +325,16 @@ create_index_stmt:    /*create index 语句的语法解析树*/
       create_index.index_name = $3;
       create_index.relation_name = $5;
       create_index.attribute_name = $7;
+      create_index.Unique = false;
+    }
+    | CREATE UNIQUE INDEX ID ON ID LBRACE ID RBRACE
+    {
+      $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
+      CreateIndexSqlNode &create_index = $$->create_index;
+      create_index.index_name = $4;
+      create_index.relation_name = $6;
+      create_index.attribute_name = $8;
+      create_index.Unique = true;
     }
     ;
 
