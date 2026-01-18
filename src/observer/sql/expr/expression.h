@@ -23,6 +23,8 @@ See the Mulan PSL v2 for more details. */
 #include "storage/common/chunk.h"
 
 class Tuple;
+class SelectStmt;
+struct SelectSqlNode;
 
 /**
  * @defgroup Expression
@@ -39,6 +41,7 @@ enum class ExprType
   STAR,                 ///< 星号，表示所有字段
   UNBOUND_FIELD,        ///< 未绑定的字段，需要在resolver阶段解析为FieldExpr
   UNBOUND_AGGREGATION,  ///< 未绑定的聚合函数，需要在resolver阶段解析为AggregateExpr
+  UNBOUND_SUBQUERY,     ///< 未绑定的子查询，需要在resolver阶段解析为SubQueryExpr
 
   FIELD,        ///< 字段。在实际执行时，根据行数据内容提取对应字段的值
   VALUE,        ///< 常量值
@@ -47,6 +50,7 @@ enum class ExprType
   CONJUNCTION,  ///< 多个表达式使用同一种关系(AND或OR)来联结
   ARITHMETIC,   ///< 算术运算
   AGGREGATION,  ///< 聚合运算
+  SUBQUERY,     ///< 子查询
 };
 
 /**
@@ -465,6 +469,40 @@ private:
   unique_ptr<Expression> child_;
 };
 
+/**
+ * @brief 未绑定的子查询表达式
+ * @ingroup Expression
+ */
+class ParsedSqlNode;  // 前向声明
+
+class UnboundSubQueryExpr : public Expression
+{
+public:
+  UnboundSubQueryExpr(SelectSqlNode *select_sql, ParsedSqlNode *parsed_node = nullptr) 
+    : select_sql_(select_sql), parsed_node_(parsed_node) {}
+
+  virtual ~UnboundSubQueryExpr() = default;
+
+  ExprType type() const override { return ExprType::UNBOUND_SUBQUERY; }
+  AttrType value_type() const override { return AttrType::UNDEFINED; }
+
+  unique_ptr<Expression> copy() const override
+  {
+    // 注意：这里需要复制 SelectSqlNode，但为了简化，暂时不复制
+    // 实际使用时应该确保 select_sql_ 在绑定完成前有效
+    return make_unique<UnboundSubQueryExpr>(select_sql_, parsed_node_);
+  }
+
+  RC get_value(const Tuple &tuple, Value &value) const override { return RC::INTERNAL; }
+
+  SelectSqlNode *select_sql() const { return select_sql_; }
+  ParsedSqlNode *parsed_node() const { return parsed_node_; }
+
+private:
+  SelectSqlNode *select_sql_;  ///< 子查询的 SQL 节点，注意这里不拥有所有权
+  ParsedSqlNode *parsed_node_;  ///< 保存子查询的 ParsedSqlNode，防止被过早释放
+};
+
 class AggregateExpr : public Expression
 {
 public:
@@ -528,3 +566,6 @@ private:
   Type                   aggregate_type_;
   unique_ptr<Expression> child_;
 };
+
+// SubQueryExpr 定义在 subquery_expr.h 中
+class SubQueryExpr;

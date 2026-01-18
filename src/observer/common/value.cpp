@@ -255,6 +255,11 @@ char* Value::data() const
 
 string Value::to_string() const
 {
+  // NULL 值 (UNDEFINED) 应该返回 "NULL" 字符串
+  if (this->attr_type_ == AttrType::UNDEFINED) {
+    return "NULL";
+  }
+  
   string res;
   RC     rc = DataType::type_instance(this->attr_type_)->to_string(*this, res);
   if (OB_FAIL(rc)) {
@@ -264,7 +269,13 @@ string Value::to_string() const
   return res;
 }
 
-int Value::compare(const Value& other) const { return DataType::type_instance(this->attr_type_)->compare(*this, other); }
+int Value::compare(const Value& other) const {
+  // 如果任何一个值是NULL (UNDEFINED)，返回INT32_MAX表示无法比较
+  if (this->attr_type_ == AttrType::UNDEFINED || other.attr_type() == AttrType::UNDEFINED) {
+    return INT32_MAX;
+  }
+  return DataType::type_instance(this->attr_type_)->compare(*this, other);
+}
 
 int Value::get_int() const
 {
