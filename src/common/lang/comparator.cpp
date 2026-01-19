@@ -79,4 +79,24 @@ int compare_string(void *arg1, int arg1_max_length, void *arg2, int arg2_max_len
   return 0;
 }
 
+int compare_binary(void *arg1, int arg1_length, void *arg2, int arg2_length)
+{
+  const char *s1 = (const char *)arg1;
+  const char *s2 = (const char *)arg2;
+  int         minlen = min(arg1_length, arg2_length);
+  int         result = memcmp(s1, s2, minlen);
+  if (0 != result) {
+    return result < 0 ? -1 : 1;
+  }
+
+  if (arg1_length > minlen) {
+    return 1;
+  }
+
+  if (arg2_length > minlen) {
+    return -1;
+  }
+  return 0;
+}
+
 }  // namespace common
