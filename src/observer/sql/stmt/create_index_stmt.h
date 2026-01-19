@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #pragma once
 
 #include "sql/stmt/stmt.h"
+#include <vector>
 
 struct CreateIndexSqlNode;
 class Table;
@@ -28,7 +29,15 @@ class CreateIndexStmt : public Stmt
 {
 public:
   CreateIndexStmt(Table *table, const FieldMeta *field_meta, const string &index_name, bool Unique)
-      : table_(table), field_meta_(field_meta), index_name_(index_name), Unique_(Unique)
+      : table_(table), index_name_(index_name), Unique_(Unique)
+  {
+    if (field_meta != nullptr) {
+      field_metas_.push_back(field_meta);
+    }
+  }
+
+  CreateIndexStmt(Table *table, const vector<const FieldMeta *> &field_metas, const string &index_name, bool Unique)
+      : table_(table), field_metas_(field_metas), index_name_(index_name), Unique_(Unique)
   {}
 
   virtual ~CreateIndexStmt() = default;
@@ -36,7 +45,8 @@ public:
   StmtType type() const override { return StmtType::CREATE_INDEX; }
 
   Table           *table() const { return table_; }
-  const FieldMeta *field_meta() const { return field_meta_; }
+  const FieldMeta *field_meta() const { return field_metas_.empty() ? nullptr : field_metas_[0]; }  // 向后兼容
+  const vector<const FieldMeta *> &field_metas() const { return field_metas_; }
   const string    &index_name() const { return index_name_; }
   bool             unique_type() const { return Unique_; }
 
@@ -44,8 +54,8 @@ public:
   static RC create(Db *db, const CreateIndexSqlNode &create_index, Stmt *&stmt);
 
 private:
-  Table           *table_      = nullptr;
-  const FieldMeta *field_meta_ = nullptr;
-  string           index_name_;
-  bool             Unique_      = false;
+  Table                      *table_      = nullptr;
+  vector<const FieldMeta *>   field_metas_;  // 支持多个字段
+  string                      index_name_;
+  bool                        Unique_      = false;
 };

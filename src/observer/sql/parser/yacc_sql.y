@@ -200,6 +200,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 %type <cstring>             storage_format
 %type <key_list>            primary_key
 %type <key_list>            attr_list
+%type <key_list>            index_attr_list
 %type <relation_list>       join_rela
 %type <relation_list>       rel_list
 %type <expression>          expression
@@ -335,23 +336,40 @@ desc_table_stmt:
     ;
 
 create_index_stmt:    /*create index 语句的语法解析树*/
-    CREATE INDEX ID ON ID LBRACE ID RBRACE
+    CREATE INDEX ID ON ID LBRACE index_attr_list RBRACE
     {
       $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
       CreateIndexSqlNode &create_index = $$->create_index;
       create_index.index_name = $3;
       create_index.relation_name = $5;
-      create_index.attribute_name = $7;
+      create_index.attribute_names.swap(*$7);
       create_index.Unique = false;
+      delete $7;
     }
-    | CREATE UNIQUE INDEX ID ON ID LBRACE ID RBRACE
+    | CREATE UNIQUE INDEX ID ON ID LBRACE index_attr_list RBRACE
     {
       $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
       CreateIndexSqlNode &create_index = $$->create_index;
       create_index.index_name = $4;
       create_index.relation_name = $6;
-      create_index.attribute_name = $8;
+      create_index.attribute_names.swap(*$8);
       create_index.Unique = true;
+      delete $8;
+    }
+    ;
+
+index_attr_list:
+    ID {
+      $$ = new vector<string>();
+      $$->push_back($1);
+    }
+    | ID COMMA index_attr_list {
+      if ($3 != nullptr) {
+        $$ = $3;
+      } else {
+        $$ = new vector<string>;
+      }
+      $$->insert($$->begin(), $1);
     }
     ;
 
