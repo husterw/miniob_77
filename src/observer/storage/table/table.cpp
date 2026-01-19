@@ -346,6 +346,11 @@ RC Table::set_value_to_record(char *record_data, const Value &value, const Field
     string text = value.get_string();
     int64_t offset = 0;
     int64_t length = static_cast<int64_t>(text.size());
+    // TEXT 最多保留 4096 字节，多余部分截断
+    static const int64_t MAX_TEXT_LENGTH = 4096;
+    if (length > MAX_TEXT_LENGTH) {
+      length = MAX_TEXT_LENGTH;
+    }
     RC rc = lob_handler_->insert_data(offset, length, text.c_str());
     if (OB_FAIL(rc)) {
       LOG_WARN("failed to insert lob data. table=%s field=%s rc=%s",
