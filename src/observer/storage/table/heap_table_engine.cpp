@@ -425,19 +425,39 @@ RC HeapTableEngine::open()
   const int index_num = table_meta_->index_num();
   for (int i = 0; i < index_num; i++) {
     const IndexMeta *index_meta = table_meta_->index(i);
-    const FieldMeta *field_meta = table_meta_->field(index_meta->field());
-    if (field_meta == nullptr) {
-      LOG_ERROR("Found invalid index meta info which has a non-exists field. table=%s, index=%s, field=%s",
-                table_meta_->name(), index_meta->name(), index_meta->field());
-      // skip cleanup
-      //  do all cleanup action in destructive Table function
+    
+    // 获取索引的所有字段
+    const vector<string> &field_names = index_meta->fields();
+    if (field_names.empty()) {
+      LOG_ERROR("Found invalid index meta info which has no fields. table=%s, index=%s",
+                table_meta_->name(), index_meta->name());
       return RC::INTERNAL;
+    }
+
+    // 从 TableMeta 中获取所有字段的 FieldMeta 指针
+    vector<const FieldMeta *> field_metas;
+    for (const auto &field_name : field_names) {
+      const FieldMeta *field_meta = table_meta_->field(field_name.c_str());
+      if (field_meta == nullptr) {
+        LOG_ERROR("Found invalid index meta info which has a non-exists field. table=%s, index=%s, field=%s",
+                  table_meta_->name(), index_meta->name(), field_name.c_str());
+        return RC::INTERNAL;
+      }
+      field_metas.push_back(field_meta);
     }
 
     BplusTreeIndex *index      = new BplusTreeIndex();
     string          index_file = table_index_file(db_->path().c_str(), table_meta_->name(), index_meta->name());
 
-    rc = index->open(table_, index_file.c_str(), *index_meta, *field_meta);
+    // 根据字段数量选择打开方法
+    if (field_metas.size() == 1) {
+      // 单字段索引：使用向后兼容的方法
+      rc = index->open(table_, index_file.c_str(), *index_meta, *field_metas[0]);
+    } else {
+      // 多字段索引：使用多字段版本
+      rc = index->open(table_, index_file.c_str(), *index_meta, field_metas);
+    }
+    
     if (rc != RC::SUCCESS) {
       delete index;
       LOG_ERROR("Failed to open index. table=%s, index=%s, file=%s, rc=%s",
