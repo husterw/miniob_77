@@ -405,7 +405,7 @@ attr_def:
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = ($$->type == AttrType::TEXTS) ? 4096 : $4;
+      $$->length = $4;
       $$->nullable = $6;
     }
     | ID type nullable_option
@@ -413,7 +413,7 @@ attr_def:
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = ($$->type == AttrType::TEXTS) ? 4096 : 4;
+      $$->length = 4;
       $$->nullable = $3;
     }
     ;

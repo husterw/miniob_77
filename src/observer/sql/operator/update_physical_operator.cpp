@@ -103,18 +103,38 @@ RC UpdatePhysicalOperator::build_updated_record(const Record &old_record, Record
   }
 
   // 步骤3：将转换后的字段值写入新记录的对应位置
-  size_t copy_len = field_meta_->len(); // 字段定义的长度
+  if (field_meta_->type() == AttrType::TEXTS) {
+    // TEXT 字段走 LOB 写入逻辑
+    if (table_ == nullptr || table_->lob_handler() == nullptr) {
+      LOG_WARN("lob handler is null when updating TEXT field. table or handler is null");
+      return RC::INTERNAL;
+    }
+
+    string text = real_value.get_string();
+    int64_t offset = 0;
+    int64_t length = static_cast<int64_t>(text.size());
+    RC rc = table_->lob_handler()->insert_data(offset, length, text.c_str());
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to insert lob data for update. field=%s rc=%s", field_meta_->name(), strrc(rc));
+      return rc;
+    }
+
+    LobRef ref;
+    ref.offset   = offset;
+    ref.length   = static_cast<int32_t>(length);
+    ref.reserved = 0;
+
+    memcpy(new_record.data() + field_meta_->offset(), &ref, sizeof(ref));
+    return RC::SUCCESS;
+  }
+
+  size_t       copy_len = field_meta_->len(); // 字段定义的长度
   const size_t data_len = real_value.length(); // 更新值的实际长度
-  // 针对字符串类型（CHARS/TEXTS）做长度适配（避免越界）
+  // 针对字符串类型（CHARS）做长度适配（避免越界）
   if (field_meta_->type() == AttrType::CHARS) {
     // CHARS类型：若更新值长度小于字段定义长度，保留空终止符（同INSERT逻辑）
     if (copy_len > data_len) {
       copy_len = data_len + 1;
-    }
-  } else if (field_meta_->type() == AttrType::TEXTS) {
-    // TEXTS类型：直接取更新值的实际长度（不保留空终止符）
-    if (copy_len > data_len) {
-      copy_len = data_len;
     }
   }
   // 将更新值写入新记录的对应偏移量位置（field_meta_->offset()是字段在记录中的偏移）

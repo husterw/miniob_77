@@ -14,6 +14,8 @@ See the Mulan PSL v2 for more details. */
 #include "common/type/data_type.h"
 #include "common/type/vector_type.h"
 #include "common/type/date_type.h"
+#include "common/type/text_type.h"
+#include "common/type/text_type.h"
 
 // Todo: 实现新数据类型
 // your code here
@@ -24,7 +26,7 @@ array<unique_ptr<DataType>, static_cast<int>(AttrType::MAXTYPE)> DataType::type_
     make_unique<IntegerType>(),
     make_unique<FloatType>(),
     make_unique<DateType>(),
-    make_unique<CharType>(),
+    make_unique<TextType>(),
     make_unique<VectorType>(),
     make_unique<DataType>(AttrType::BOOLEANS),
 };

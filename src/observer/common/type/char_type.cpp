@@ -36,8 +36,8 @@ RC CharType::cast_to(const Value &val, AttrType type, Value &result) const
       return RC::SUCCESS;
     }
     case AttrType::TEXTS: {
-      result.set_string(val.value_.pointer_value_, val.length_ > 4096 ? 4096 : val.length_);
-      result.set_type(type);
+      result.set_string(val.value_.pointer_value_, val.length_);
+      result.set_type(AttrType::TEXTS);
       return RC::SUCCESS;
     }
     case AttrType::DATES: {

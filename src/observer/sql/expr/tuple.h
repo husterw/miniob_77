@@ -20,6 +20,8 @@ See the Mulan PSL v2 for more details. */
 #include "sql/parser/parse.h"
 #include "common/value.h"
 #include "storage/record/record.h"
+#include "storage/record/lob_ref.h"
+#include "storage/record/lob_handler.h"
 
 class Table;
 
@@ -223,6 +225,35 @@ public:
       }
     }
     
+    if (field_meta->type() == AttrType::TEXTS) {
+      const LobRef *ref = reinterpret_cast<const LobRef *>(this->record_->data() + field_meta->offset());
+      if (ref->length == 0) {
+        // 空字符串
+        cell.set_type(AttrType::TEXTS);
+        static const char empty_str[] = "";
+        cell.set_data(const_cast<char *>(empty_str), 0);
+        return RC::SUCCESS;
+      }
+
+      const Table *table = table_;
+      if (table == nullptr || table->lob_handler() == nullptr) {
+        LOG_WARN("lob handler is null when reading TEXT field");
+        return RC::INTERNAL;
+      }
+
+      string text;
+      text.resize(ref->length);
+      RC rc = table->lob_handler()->get_data(ref->offset, ref->length, text.data());
+      if (OB_FAIL(rc)) {
+        LOG_WARN("failed to read lob data. rc=%s", strrc(rc));
+        return rc;
+      }
+
+      cell.set_type(AttrType::TEXTS);
+      cell.set_data(text.data(), static_cast<int>(text.size()));
+      return RC::SUCCESS;
+    }
+
     cell.set_type(field_meta->type());
     cell.set_data(this->record_->data() + field_meta->offset(), field_meta->len());
     return RC::SUCCESS;

@@ -122,6 +122,17 @@ RC Table::create(Db *db, int32_t table_id, const char *path, const char *name, c
     return rc;
   }
 
+  // 创建并打开 LOB 文件
+  if (lob_handler_ == nullptr) {
+    lob_handler_ = new LobFileHandler();
+  }
+  string lob_file = table_lob_file(base_dir, name);
+  rc = lob_handler_->create_file(lob_file.c_str());
+  if (rc != RC::SUCCESS) {
+    LOG_ERROR("Failed to create lob file. file name=%s, rc=%s", lob_file.c_str(), strrc(rc));
+    return rc;
+  }
+
   LOG_INFO("Successfully create table %s:%s", base_dir, name);
   return rc;
 }
@@ -155,6 +166,16 @@ RC Table::drop(Db *db, const char *path)
       }
     }
   }
+  
+  // 删除 LOB 文件
+  string lob_file = table_lob_file(db_->path().c_str(), name());
+  if (std::filesystem::exists(lob_file)) {
+    if (!std::filesystem::remove(lob_file)) {
+      printf("Failed to remove lob file: %s\n", lob_file.c_str());
+      return rc;
+    }
+  }
+  
   printf("Successfully dropped table %s\n", name());
   return rc;
 }
@@ -201,6 +222,20 @@ RC Table::open(Db *db, const char *meta_file, const char *base_dir)
   rc = engine_->open();
   if (rc != RC::SUCCESS) {
     LOG_ERROR("Failed to open table %s due to engine open failed.", base_dir);
+    return rc;
+  }
+
+  // 打开或创建 LOB 文件
+  if (lob_handler_ == nullptr) {
+    lob_handler_ = new LobFileHandler();
+  }
+  string lob_file = table_lob_file(db_->path().c_str(), table_meta_.name());
+  rc = lob_handler_->open_file(lob_file.c_str());
+  if (rc == RC::FILE_NOT_EXIST) {
+    rc = lob_handler_->create_file(lob_file.c_str());
+  }
+  if (rc != RC::SUCCESS) {
+    LOG_ERROR("Failed to open/create lob file. file name=%s, rc=%s", lob_file.c_str(), strrc(rc));
     return rc;
   }
 
@@ -301,15 +336,37 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
 
 RC Table::set_value_to_record(char *record_data, const Value &value, const FieldMeta *field)
 {
+  if (field->type() == AttrType::TEXTS) {
+    if (lob_handler_ == nullptr) {
+      LOG_WARN("lob handler is null when setting TEXT field. table=%s field=%s",
+               table_meta_.name(), field->name());
+      return RC::INTERNAL;
+    }
+
+    string text = value.get_string();
+    int64_t offset = 0;
+    int64_t length = static_cast<int64_t>(text.size());
+    RC rc = lob_handler_->insert_data(offset, length, text.c_str());
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to insert lob data. table=%s field=%s rc=%s",
+               table_meta_.name(), field->name(), strrc(rc));
+      return rc;
+    }
+
+    LobRef ref;
+    ref.offset   = offset;
+    ref.length   = static_cast<int32_t>(length);
+    ref.reserved = 0;
+
+    memcpy(record_data + field->offset(), &ref, sizeof(ref));
+    return RC::SUCCESS;
+  }
+
   size_t       copy_len = field->len();
   const size_t data_len = value.length();
   if (field->type() == AttrType::CHARS) {
     if (copy_len > data_len) {
       copy_len = data_len + 1;
-    }
-  } else if (field->type() == AttrType::TEXTS) {
-    if (copy_len > data_len) {
-      copy_len = data_len;
     }
   }
   memcpy(record_data + field->offset(), value.data(), copy_len);

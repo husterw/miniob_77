@@ -16,8 +16,10 @@ See the Mulan PSL v2 for more details. */
 #include "common/lang/algorithm.h"
 #include "common/log/log.h"
 #include "common/global_context.h"
+#include "common/type/attr_type.h"
 #include "storage/table/table_meta.h"
 #include "storage/trx/trx.h"
+#include "storage/record/lob_ref.h"
 #include "json/json.h"
 
 static const Json::StaticString FIELD_TABLE_ID("table_id");
@@ -82,15 +84,21 @@ RC TableMeta::init(int32_t table_id, const char *name, const vector<FieldMeta> *
 
   for (size_t i = 0; i < attributes.size(); i++) {
     const AttrInfoSqlNode &attr_info = attributes[i];
+    int                   attr_len  = attr_info.length;
+
+    // TEXT 字段在行内只存储 LobRef，而不是整段文本
+    if (attr_info.type == AttrType::TEXTS) {
+      attr_len = static_cast<int>(sizeof(LobRef));
+    }
+
     // `i` is the col_id of fields[i]
     rc = fields_[i + trx_field_num].init(
-      attr_info.name.c_str(), attr_info.type, field_offset, attr_info.length, true /*visible*/, i, attr_info.nullable);
+      attr_info.name.c_str(), attr_info.type, field_offset, attr_len, true /*visible*/, i, attr_info.nullable);
     if (OB_FAIL(rc)) {
       LOG_ERROR("Failed to init field meta. table name=%s, field name: %s", name, attr_info.name.c_str());
       return rc;
     }
-
-    field_offset += attr_info.length;
+    field_offset += attr_len;
   }
 
   primary_keys_ = primary_keys;

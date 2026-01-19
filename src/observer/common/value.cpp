@@ -37,7 +37,8 @@ Value::Value(const Value& other)
   this->length_ = other.length_;
   this->own_data_ = other.own_data_;
   switch (this->attr_type_) {
-  case AttrType::CHARS: {
+  case AttrType::CHARS:
+  case AttrType::TEXTS: {
     set_string_from_other(other);
   } break;
 
@@ -67,7 +68,8 @@ Value& Value::operator=(const Value& other)
   this->length_ = other.length_;
   this->own_data_ = other.own_data_;
   switch (this->attr_type_) {
-  case AttrType::CHARS: {
+  case AttrType::CHARS:
+  case AttrType::TEXTS: {
     set_string_from_other(other);
   } break;
 
@@ -97,6 +99,7 @@ void Value::reset()
 {
   switch (attr_type_) {
   case AttrType::CHARS:
+  case AttrType::TEXTS:
     if (own_data_ && value_.pointer_value_ != nullptr) {
       delete[] value_.pointer_value_;
       value_.pointer_value_ = nullptr;
@@ -130,7 +133,7 @@ void Value::set_data(char* data, int length)
   } break;
   case AttrType::TEXTS: {
     set_string(data, length);
-    set_type(AttrType::TEXTS);
+    set_type(AttrType::TEXTS);  
   } break;
   case AttrType::BOOLEANS: {
     value_.bool_value_ = *(int*)data != 0;
@@ -243,7 +246,7 @@ void Value::set_string_from_other(const Value& other)
 char* Value::data() const
 {
   switch (attr_type_) {
-  case AttrType::CHARS:
+  case AttrType::CHARS: 
   case AttrType::TEXTS: {
     return value_.pointer_value_;
   } break;
