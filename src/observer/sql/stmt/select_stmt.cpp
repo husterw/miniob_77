@@ -264,15 +264,12 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt,
     LOG_TRACE("creating subquery SelectStmt with %d expressions, %d relations", 
               subquery_sql_copy.expressions.size(), subquery_sql_copy.relations.size());
     // 传递外部查询的表信息，以支持相关子查询（correlated subquery）
-    Stmt *stmt = nullptr;
-    rc = SelectStmt::create(db, subquery_sql_copy, stmt, &table_map);
+    rc = SelectStmt::create(db, subquery_sql_copy, reinterpret_cast<Stmt *&>(subquery_stmt), &table_map);
     if (OB_FAIL(rc)) {
       LOG_WARN("failed to create subquery SelectStmt. rc=%s", strrc(rc));
       if (filter_stmt) delete filter_stmt;
       return rc;
     }
-    
-    subquery_stmt = static_cast<SelectStmt *>(stmt);
     
     // 验证子查询是否成功创建并包含表达式
     if (subquery_stmt->query_expressions().empty()) {

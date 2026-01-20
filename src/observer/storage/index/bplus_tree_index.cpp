@@ -16,8 +16,6 @@ See the Mulan PSL v2 for more details. */
 #include "common/log/log.h"
 #include "storage/table/table.h"
 #include "storage/db/db.h"
-#include <vector>
-#include <cstring>
 
 BplusTreeIndex::~BplusTreeIndex() noexcept { close(); }
 
@@ -43,46 +41,6 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
   table_  = table;
   LOG_INFO("Successfully create index, file_name:%s, index:%s, field:%s",
     file_name, index_meta.name(), index_meta.field());
-  return RC::SUCCESS;
-}
-
-RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &index_meta, const vector<const FieldMeta *> &field_metas)
-{
-  if (inited_) {
-    LOG_WARN("Failed to create index due to the index has been created before. file_name:%s, index:%s",
-        file_name, index_meta.name());
-    return RC::RECORD_OPENNED;
-  }
-
-  if (field_metas.empty()) {
-    LOG_WARN("Failed to create index, no fields specified");
-    return RC::INVALID_ARGUMENT;
-  }
-
-  Index::init(index_meta, field_metas);
-
-  // 计算复合键的总长度
-  int total_key_length = 0;
-  AttrType first_type = field_metas[0]->type();
-  for (const auto *field_meta : field_metas) {
-    total_key_length += field_meta->len();
-    // 对于多字段索引，使用第一个字段的类型（B+树需要统一类型，实际比较时会按字段顺序比较）
-  }
-
-  BufferPoolManager &bpm = table->db()->buffer_pool_manager();
-  // 注意：B+树目前只支持单一类型，我们需要使用第一个字段的类型
-  // 实际比较时会在KeyComparator中按字段顺序比较
-  RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, first_type, total_key_length);
-  if (RC::SUCCESS != rc) {
-    LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, rc:%s",
-        file_name, index_meta.name(), strrc(rc));
-    return rc;
-  }
-
-  inited_ = true;
-  table_  = table;
-  LOG_INFO("Successfully create multi-field index, file_name:%s, index:%s, fields count:%zu",
-    file_name, index_meta.name(), field_metas.size());
   return RC::SUCCESS;
 }
 
@@ -124,66 +82,27 @@ RC BplusTreeIndex::close()
 
 RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 {
-  // 构建复合键
-  vector<char> composite_key;
-  if (field_metas_.size() > 1) {
-    // 多字段索引：将所有字段值拼接在一起
-    int total_len = 0;
-    for (const auto *field_meta : field_metas_) {
-      total_len += field_meta->len();
-    }
-    composite_key.resize(total_len);
-    char *key_ptr = composite_key.data();
-    for (const auto *field_meta : field_metas_) {
-      memcpy(key_ptr, record + field_meta->offset(), field_meta->len());
-      key_ptr += field_meta->len();
-    }
-  } else {
-    // 单字段索引：向后兼容
-    composite_key.resize(field_meta_.len());
-    memcpy(composite_key.data(), record + field_meta_.offset(), field_meta_.len());
-  }
-
   if(index_meta_.unique_type()) {
     // check duplicate key
     list<RID> existing_rids;
-    RC rc = index_handler_.get_entry(composite_key.data(), composite_key.size(), existing_rids);
+    RC rc = index_handler_.get_entry(record + field_meta_.offset(), field_meta_.len(), existing_rids);
     if (rc != RC::SUCCESS && rc != RC::RECORD_INVALID_KEY) {
       LOG_WARN("Failed to check duplicate key when insert entry to unique index, rc=%d:%s",
                rc, strrc(rc));
       return rc;
     }
     if (!existing_rids.empty()) {
-      LOG_WARN("Duplicate key when insert entry to unique index. index:%s",
-               index_meta_.name());
+      LOG_WARN("Duplicate key when insert entry to unique index. index:%s, field:%s, key value at offset %d",
+               index_meta_.name(), index_meta_.field(), field_meta_.offset());
       return RC::RECORD_DUPLICATE_KEY;
     }
   }
-  return index_handler_.insert_entry(composite_key.data(), rid);
+  return index_handler_.insert_entry(record + field_meta_.offset(), rid);
 }
 
 RC BplusTreeIndex::delete_entry(const char *record, const RID *rid)
 {
-  // 构建复合键
-  vector<char> composite_key;
-  if (field_metas_.size() > 1) {
-    // 多字段索引：将所有字段值拼接在一起
-    int total_len = 0;
-    for (const auto *field_meta : field_metas_) {
-      total_len += field_meta->len();
-    }
-    composite_key.resize(total_len);
-    char *key_ptr = composite_key.data();
-    for (const auto *field_meta : field_metas_) {
-      memcpy(key_ptr, record + field_meta->offset(), field_meta->len());
-      key_ptr += field_meta->len();
-    }
-  } else {
-    // 单字段索引：向后兼容
-    composite_key.resize(field_meta_.len());
-    memcpy(composite_key.data(), record + field_meta_.offset(), field_meta_.len());
-  }
-  return index_handler_.delete_entry(composite_key.data(), rid);
+  return index_handler_.delete_entry(record + field_meta_.offset(), rid);
 }
 
 IndexScanner *BplusTreeIndex::create_scanner(

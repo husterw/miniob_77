@@ -558,15 +558,13 @@ RC ExpressionBinder::bind_subquery_expression(
     }
   }
 
-  Stmt *stmt = nullptr;
-  RC rc = SelectStmt::create(db, subquery_sql_copy, stmt, 
+  SelectStmt *subquery_stmt = nullptr;
+  RC rc = SelectStmt::create(db, subquery_sql_copy, reinterpret_cast<Stmt *&>(subquery_stmt), 
                              outer_tables_map.empty() ? nullptr : &outer_tables_map);
   if (OB_FAIL(rc)) {
     LOG_WARN("failed to create subquery SelectStmt. rc=%s", strrc(rc));
     return rc;
   }
-
-  SelectStmt *subquery_stmt = static_cast<SelectStmt *>(stmt);
 
   // 验证子查询是否成功创建并包含表达式
   if (subquery_stmt->query_expressions().empty()) {
