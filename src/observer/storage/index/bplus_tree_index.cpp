@@ -29,16 +29,7 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
     return RC::RECORD_OPENNED;
   }
 
-  // 从 TableMeta 中获取 FieldMeta 指针，确保指针有效
-  const FieldMeta *field_meta_ptr = table->table_meta().field(field_meta.name());
-  if (field_meta_ptr == nullptr) {
-    LOG_WARN("Failed to find field in table meta. field name=%s", field_meta.name());
-    return RC::SCHEMA_FIELD_MISSING;
-  }
-
-  vector<const FieldMeta *> field_metas;
-  field_metas.push_back(field_meta_ptr);
-  Index::init(index_meta, field_metas);
+  Index::init(index_meta, field_meta);
 
   BufferPoolManager &bpm = table->db()->buffer_pool_manager();
   RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, field_meta.type(), field_meta.len());
@@ -68,23 +59,7 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
     return RC::INVALID_ARGUMENT;
   }
 
-  // 验证所有 FieldMeta 指针都有效，并且都指向 TableMeta 中的 FieldMeta
-  vector<const FieldMeta *> validated_field_metas;
-  for (const auto *field_meta : field_metas) {
-    if (field_meta == nullptr) {
-      LOG_WARN("field_meta is null in field_metas");
-      return RC::INVALID_ARGUMENT;
-    }
-    // 从 TableMeta 中获取 FieldMeta 指针，确保指针有效
-    const FieldMeta *validated_field_meta = table->table_meta().field(field_meta->name());
-    if (validated_field_meta == nullptr) {
-      LOG_WARN("Failed to find field in table meta. field name=%s", field_meta->name());
-      return RC::SCHEMA_FIELD_MISSING;
-    }
-    validated_field_metas.push_back(validated_field_meta);
-  }
-
-  Index::init(index_meta, validated_field_metas);
+  Index::init(index_meta, field_metas);
 
   // 计算复合键的总长度
   int total_key_length = 0;
@@ -149,46 +124,24 @@ RC BplusTreeIndex::close()
 
 RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 {
-  if (record == nullptr || rid == nullptr) {
-    LOG_WARN("Invalid arguments: record or rid is null");
-    return RC::INVALID_ARGUMENT;
-  }
-
   // 构建复合键
   vector<char> composite_key;
-  if (field_metas_.empty()) {
-    // 如果没有 field_metas_，使用 field_meta_（向后兼容）
-    composite_key.resize(field_meta_.len());
-    memcpy(composite_key.data(), record + field_meta_.offset(), field_meta_.len());
-  } else if (field_metas_.size() == 1) {
-    // 单字段索引：使用 field_metas_[0]
-    const FieldMeta *field_meta = field_metas_[0];
-    if (field_meta == nullptr) {
-      LOG_WARN("field_meta is null in single field index");
-      return RC::INTERNAL;
-    }
-    composite_key.resize(field_meta->len());
-    memcpy(composite_key.data(), record + field_meta->offset(), field_meta->len());
-  } else {
+  if (field_metas_.size() > 1) {
     // 多字段索引：将所有字段值拼接在一起
     int total_len = 0;
     for (const auto *field_meta : field_metas_) {
-      if (field_meta == nullptr) {
-        LOG_WARN("field_meta is null in multi-field index");
-        return RC::INTERNAL;
-      }
       total_len += field_meta->len();
     }
     composite_key.resize(total_len);
     char *key_ptr = composite_key.data();
     for (const auto *field_meta : field_metas_) {
-      if (field_meta == nullptr) {
-        LOG_WARN("field_meta is null in multi-field index");
-        return RC::INTERNAL;
-      }
       memcpy(key_ptr, record + field_meta->offset(), field_meta->len());
       key_ptr += field_meta->len();
     }
+  } else {
+    // 单字段索引：向后兼容
+    composite_key.resize(field_meta_.len());
+    memcpy(composite_key.data(), record + field_meta_.offset(), field_meta_.len());
   }
 
   if(index_meta_.unique_type()) {
@@ -211,46 +164,24 @@ RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 
 RC BplusTreeIndex::delete_entry(const char *record, const RID *rid)
 {
-  if (record == nullptr || rid == nullptr) {
-    LOG_WARN("Invalid arguments: record or rid is null");
-    return RC::INVALID_ARGUMENT;
-  }
-
   // 构建复合键
   vector<char> composite_key;
-  if (field_metas_.empty()) {
-    // 如果没有 field_metas_，使用 field_meta_（向后兼容）
-    composite_key.resize(field_meta_.len());
-    memcpy(composite_key.data(), record + field_meta_.offset(), field_meta_.len());
-  } else if (field_metas_.size() == 1) {
-    // 单字段索引：使用 field_metas_[0]
-    const FieldMeta *field_meta = field_metas_[0];
-    if (field_meta == nullptr) {
-      LOG_WARN("field_meta is null in single field index");
-      return RC::INTERNAL;
-    }
-    composite_key.resize(field_meta->len());
-    memcpy(composite_key.data(), record + field_meta->offset(), field_meta->len());
-  } else {
+  if (field_metas_.size() > 1) {
     // 多字段索引：将所有字段值拼接在一起
     int total_len = 0;
     for (const auto *field_meta : field_metas_) {
-      if (field_meta == nullptr) {
-        LOG_WARN("field_meta is null in multi-field index");
-        return RC::INTERNAL;
-      }
       total_len += field_meta->len();
     }
     composite_key.resize(total_len);
     char *key_ptr = composite_key.data();
     for (const auto *field_meta : field_metas_) {
-      if (field_meta == nullptr) {
-        LOG_WARN("field_meta is null in multi-field index");
-        return RC::INTERNAL;
-      }
       memcpy(key_ptr, record + field_meta->offset(), field_meta->len());
       key_ptr += field_meta->len();
     }
+  } else {
+    // 单字段索引：向后兼容
+    composite_key.resize(field_meta_.len());
+    memcpy(composite_key.data(), record + field_meta_.offset(), field_meta_.len());
   }
   return index_handler_.delete_entry(composite_key.data(), rid);
 }
