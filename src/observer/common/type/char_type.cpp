@@ -18,9 +18,7 @@ See the Mulan PSL v2 for more details. */
 int CharType::compare(const Value &left, const Value &right) const
 {
   ASSERT(is_string_type(left.attr_type()) && is_string_type(right.attr_type()), "invalid type");
-  // 对于固定长度的字符串，使用二进制比较可以正确处理多字段索引
-  // compare_binary 使用 memcmp，可以正确处理包含 null 字节的二进制数据
-  return common::compare_binary(
+  return common::compare_string(
       (void *)left.value_.pointer_value_, left.length_, (void *)right.value_.pointer_value_, right.length_);
 }
 

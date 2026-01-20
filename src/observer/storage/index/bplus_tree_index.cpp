@@ -63,16 +63,16 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
 
   // 计算复合键的总长度
   int total_key_length = 0;
+  AttrType first_type = field_metas[0]->type();
   for (const auto *field_meta : field_metas) {
     total_key_length += field_meta->len();
+    // 对于多字段索引，使用第一个字段的类型（B+树需要统一类型，实际比较时会按字段顺序比较）
   }
 
   BufferPoolManager &bpm = table->db()->buffer_pool_manager();
-  // 对于多字段索引，使用 CHARS 类型进行字节比较
-  // 这样可以正确处理不同字段类型的复合键（如 int + float）
-  // 字节比较会按照字段顺序逐个字节比较，对于相同类型的字段可以正确排序
-  AttrType composite_type = (field_metas.size() == 1) ? field_metas[0]->type() : AttrType::CHARS;
-  RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, composite_type, total_key_length);
+  // 注意：B+树目前只支持单一类型，我们需要使用第一个字段的类型
+  // 实际比较时会在KeyComparator中按字段顺序比较
+  RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, first_type, total_key_length);
   if (RC::SUCCESS != rc) {
     LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, rc:%s",
         file_name, index_meta.name(), strrc(rc));
