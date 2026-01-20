@@ -41,7 +41,7 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
   Index::init(index_meta, field_metas);
 
   BufferPoolManager &bpm = table->db()->buffer_pool_manager();
-  RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, field_meta_ptr->type(), field_meta_ptr->len());
+  RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, field_meta.type(), field_meta.len());
   if (RC::SUCCESS != rc) {
     LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, field:%s, rc:%s",
         file_name, index_meta.name(), index_meta.field(), strrc(rc));
@@ -86,9 +86,9 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
 
   Index::init(index_meta, validated_field_metas);
 
-  // 计算复合键的总长度（使用验证后的 field_metas）
+  // 计算复合键的总长度
   int total_key_length = 0;
-  for (const auto *field_meta : validated_field_metas) {
+  for (const auto *field_meta : field_metas) {
     total_key_length += field_meta->len();
   }
 
@@ -96,7 +96,7 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
   // 对于多字段索引，使用 CHARS 类型进行字节比较
   // 这样可以正确处理不同字段类型的复合键（如 int + float）
   // 字节比较会按照字段顺序逐个字节比较，对于相同类型的字段可以正确排序
-  AttrType composite_type = (validated_field_metas.size() == 1) ? validated_field_metas[0]->type() : AttrType::CHARS;
+  AttrType composite_type = (field_metas.size() == 1) ? field_metas[0]->type() : AttrType::CHARS;
   RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, composite_type, total_key_length);
   if (RC::SUCCESS != rc) {
     LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, rc:%s",
@@ -107,7 +107,7 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
   inited_ = true;
   table_  = table;
   LOG_INFO("Successfully create multi-field index, file_name:%s, index:%s, fields count:%zu",
-    file_name, index_meta.name(), validated_field_metas.size());
+    file_name, index_meta.name(), field_metas.size());
   return RC::SUCCESS;
 }
 
@@ -119,16 +119,7 @@ RC BplusTreeIndex::open(Table *table, const char *file_name, const IndexMeta &in
     return RC::RECORD_OPENNED;
   }
 
-  // 从 TableMeta 中获取 FieldMeta 指针，确保指针有效
-  const FieldMeta *field_meta_ptr = table->table_meta().field(field_meta.name());
-  if (field_meta_ptr == nullptr) {
-    LOG_WARN("Failed to find field in table meta. field name=%s", field_meta.name());
-    return RC::SCHEMA_FIELD_MISSING;
-  }
-
-  vector<const FieldMeta *> field_metas;
-  field_metas.push_back(field_meta_ptr);
-  Index::init(index_meta, field_metas);
+  Index::init(index_meta, field_meta);
 
   BufferPoolManager &bpm = table->db()->buffer_pool_manager();
   RC rc = index_handler_.open(table->db()->log_handler(), bpm, file_name);
@@ -142,52 +133,6 @@ RC BplusTreeIndex::open(Table *table, const char *file_name, const IndexMeta &in
   table_  = table;
   LOG_INFO("Successfully open index, file_name:%s, index:%s, field:%s",
     file_name, index_meta.name(), index_meta.field());
-  return RC::SUCCESS;
-}
-
-RC BplusTreeIndex::open(Table *table, const char *file_name, const IndexMeta &index_meta, const vector<const FieldMeta *> &field_metas)
-{
-  if (inited_) {
-    LOG_WARN("Failed to open index due to the index has been initedd before. file_name:%s, index:%s",
-        file_name, index_meta.name());
-    return RC::RECORD_OPENNED;
-  }
-
-  if (field_metas.empty()) {
-    LOG_WARN("Failed to open index, no fields specified");
-    return RC::INVALID_ARGUMENT;
-  }
-
-  // 验证所有 FieldMeta 指针都有效，并且都指向 TableMeta 中的 FieldMeta
-  vector<const FieldMeta *> validated_field_metas;
-  for (const auto *field_meta : field_metas) {
-    if (field_meta == nullptr) {
-      LOG_WARN("field_meta is null in field_metas");
-      return RC::INVALID_ARGUMENT;
-    }
-    // 从 TableMeta 中获取 FieldMeta 指针，确保指针有效
-    const FieldMeta *validated_field_meta = table->table_meta().field(field_meta->name());
-    if (validated_field_meta == nullptr) {
-      LOG_WARN("Failed to find field in table meta. field name=%s", field_meta->name());
-      return RC::SCHEMA_FIELD_MISSING;
-    }
-    validated_field_metas.push_back(validated_field_meta);
-  }
-
-  Index::init(index_meta, validated_field_metas);
-
-  BufferPoolManager &bpm = table->db()->buffer_pool_manager();
-  RC rc = index_handler_.open(table->db()->log_handler(), bpm, file_name);
-  if (RC::SUCCESS != rc) {
-    LOG_WARN("Failed to open index_handler, file_name:%s, index:%s, rc:%s",
-        file_name, index_meta.name(), strrc(rc));
-    return rc;
-  }
-
-  inited_ = true;
-  table_  = table;
-  LOG_INFO("Successfully open multi-field index, file_name:%s, index:%s, fields count:%zu",
-    file_name, index_meta.name(), validated_field_metas.size());
   return RC::SUCCESS;
 }
 
